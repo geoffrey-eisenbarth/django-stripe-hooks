@@ -6,10 +6,11 @@ import pytest
 from django.conf import settings
 
 from django_stripe_hooks.models import Product
+from pytest_django.live_server import LiveServer
 
 
 @pytest.mark.django_db
-def test_stripe_product_created_webhook(live_server):
+def test_stripe_product_created_webhook(live_server: LiveServer) -> None:
   # 1. Setup Stripe API Key using your preferred naming
   stripe.api_key = settings.STRIPE_SECRET_KEY
 
@@ -25,7 +26,7 @@ def test_stripe_product_created_webhook(live_server):
   product_exists = False
   retries = 20
   while retries > 0:
-    if Product.objects.filter(id=stripe_product.id).exists():
+    if Product.objects.filter(id=stripe_product.id).exists():  # type: ignore
       product_exists = True
       break
     time.sleep(0.5)
@@ -34,5 +35,5 @@ def test_stripe_product_created_webhook(live_server):
   # 4. Assertions
   assert product_exists, f'Product {stripe_product.id} was not created'
 
-  local_product = Product.objects.get(id=stripe_product.id)
+  local_product = Product.objects.get(id=stripe_product.id)  # type: ignore
   assert local_product.name == unique_name

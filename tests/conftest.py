@@ -2,6 +2,7 @@ import os
 import re
 import subprocess
 import time
+from typing import Generator
 
 import pytest
 
@@ -12,7 +13,7 @@ WEBHOOK_URL = 'localhost:8888/stripe/webhooks/'
 
 
 @pytest.fixture(scope='session', autouse=True)
-def check_stripe_installed():
+def check_stripe_installed() -> None:
   try:
     subprocess.run(['stripe', '--version'], capture_output=True, check=True)
   except (subprocess.CalledProcessError, FileNotFoundError):
@@ -20,7 +21,7 @@ def check_stripe_installed():
 
 
 @pytest.fixture(scope='session', autouse=True)
-def stripe_cli_setup():
+def stripe_cli_setup() -> Generator[None, None, None]:
   """
   Starts the Stripe CLI, captures the dynamic signing secret,
   and updates Django settings for the duration of the test session.
