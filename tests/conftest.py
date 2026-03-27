@@ -75,9 +75,11 @@ def stripe_cli_setup():
   # Inject the secret into Django settings
   settings.STRIPE_WEBHOOK_SECRET_KEY = wh_secret
 
-  yield  # The tests run here
-
-  # Shutdown the CLI after tests are done
-  process.terminate()
-  process.wait()
-  log_file.close()
+  try:
+    # The tests run here
+    yield
+  finally:
+    # Shutdown the CLI after tests are done
+    process.terminate()
+    process.wait()
+    log_file.close()

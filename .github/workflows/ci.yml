@@ -34,6 +34,12 @@ jobs:
           poetry run pip install "Django${{ matrix.django-version }}"
           poetry install --with dev
 
+      - name: Lint with flake8
+        run: poetry run flake8 .
+
+      - name: Check types with mypy
+        run: poetry run mypy . --strict
+
       - name: Start Stripe CLI and Capture Secret
         env:
           STRIPE_API_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
@@ -57,9 +63,6 @@ jobs:
           echo "STRIPE_WEBHOOK_SECRET_KEY=$WH_SECRET" >> $GITHUB_ENV
           echo "Successfully captured dynamic webhook secret."
 
-      - name: Lint with flake8
-        run: poetry run flake8 .
-
       - name: Run tests
         env:
           # Map GitHub Secrets to Environment Variables
@@ -71,6 +74,10 @@ jobs:
         run: |
           poetry run coverage run tests/project/manage.py test
           poetry run coverage xml
+
+      - name: Cleanup Stripe CLI
+        if: always()
+        run: pkill -f stripe || true
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
