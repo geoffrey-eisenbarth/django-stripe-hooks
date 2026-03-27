@@ -4,6 +4,7 @@ __pycache__/
 .*.sw*
 *.sqlite3
 poetry.lock
+stripe_cli.log
 .coverage
 coverage.xml
 test*.html
