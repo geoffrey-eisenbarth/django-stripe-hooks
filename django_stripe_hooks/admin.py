@@ -164,11 +164,10 @@ class PromotionCodeAdmin(StripeModelAdmin[PromotionCode]):
   list_display = (
     'code',
     'coupon',
-    'terms',
+    'coupon__terms',
     'expires_at',
     'redemptions',
     'active',
-    'link',
   )
   list_select_related = ('coupon', )
   list_display_links = None
@@ -184,6 +183,10 @@ class PromotionCodeAdmin(StripeModelAdmin[PromotionCode]):
       ),
     }),
   )
+
+  @admin.display(description=_("Terms"))
+  def coupon__terms(self, obj: PromotionCode) -> str:
+    return obj.coupon.terms
 
 
 class SubscriptionInline(StripeModelInline[Subscription, Customer]):
