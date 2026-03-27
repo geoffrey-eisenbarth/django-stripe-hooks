@@ -6,7 +6,7 @@ import pytest
 from django.conf import settings
 
 from django_stripe_hooks.models import Product
-from pytest_django.live_server import LiveServer
+from pytest_django.live_server_helper import LiveServer
 
 
 @pytest.mark.django_db

@@ -28,4 +28,6 @@ stripe --version
 
 2) Run test: `poetry run pytest -s`
 
+To generate coverage report, use `poetry run pytest --cov --cov-branch --cov-report=xml`
+
 Whenever tests fail, you can check `stripe_cli.log` for more details.

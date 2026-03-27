@@ -37,7 +37,7 @@ jobs:
         run: poetry run flake8 .
 
       - name: Check types with mypy
-        run: poetry run mypy --strict
+        run: poetry run mypy --strict --cov --cov-branch --cov-report=xml
 
       - name: Start Stripe CLI and Capture Secret
         env:
@@ -71,8 +71,7 @@ jobs:
           # The Stripe CLI specifically looks for this name:
           STRIPE_API_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
         run: |
-          poetry run coverage run tests/project/manage.py test
-          poetry run coverage xml
+          poetry run pytest --cov --cov-branch --cov-report=xml
 
       - name: Cleanup Stripe CLI
         if: always()
