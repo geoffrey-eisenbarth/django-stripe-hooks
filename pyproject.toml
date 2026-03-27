@@ -25,6 +25,7 @@ coverage = "^7.13.5"
 pytest = "^9.0.2"
 pytest-django = "^4.12.0"
 django-stubs-ext = "^6.0.1"
+ipython = "^9.11.0"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
