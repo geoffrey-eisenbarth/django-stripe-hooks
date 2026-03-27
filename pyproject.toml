@@ -46,7 +46,8 @@ show_missing = true
 python_version = '3.12'
 plugins = ['mypy_django_plugin.main']
 ignore_missing_imports = true
-packages = ['django_stripe_hooks']
+explicit_package_bases = true
+packages = ['django_stripe_hooks', 'tests']
 
 [tool.django-stubs]
 django_settings_module = 'tests.project.project.settings'
