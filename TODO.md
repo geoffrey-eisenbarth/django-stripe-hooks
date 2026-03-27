@@ -1,0 +1,5 @@
+- Migrate to StripeClient()
+ - https://github.com/stripe/stripe-python/wiki/Migration-guide-for-v8-(StripeClient)
+- Finish testing suite
+- Create pypi and testpypi entries
+- Add github/actions/publish.yml

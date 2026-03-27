@@ -122,7 +122,15 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
-STRIPE_PUBLIC_KEY = ''
-STRIPE_SECRET_KEY = ''
-STRIPE_WEBHOOK_SECRET_KEY = ''
-STRIPE_API_VERSION = ''
+
+# Add Stripe secrets from .env file with django-env
+from environ import Env
+
+env = Env()
+env.read_env(Path(BASE_DIR) / '.env')
+
+STRIPE_PUBLIC_KEY = env.str("STRIPE_PUBLIC_KEY", default="")
+STRIPE_SECRET_KEY = env.str("STRIPE_SECRET_KEY", default="")
+STRIPE_WEBHOOK_SECRET_KEY = env.str("STRIPE_WEBHOOK_SECRET_KEY", default="")
+
+STRIPE_API_VERSION = '2020-08-27'

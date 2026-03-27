@@ -57,7 +57,7 @@ class StripeWebhooks(View):
     """
 
     # Refresh from Stripe and create/update locally
-    DjangoModel = self.resolve_django_model(self.event.data.oject.object)
+    DjangoModel = self.resolve_django_model(self.event.data.object.object)
     StripeClass = getattr(stripe, DjangoModel.__name__)
     self.stripe_obj = StripeClass.retrieve(self.event.data.object.id)
     self.django_obj = DjangoModel.from_stripe(self.stripe_obj)

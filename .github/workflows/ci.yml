@@ -1,0 +1,82 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+        django-version: ["~=6.0.0"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install Stripe CLI
+        run: |
+          curl -s https://packages.stripe.dev/api/gpg/key/public | gpg --dearmor | sudo tee /usr/share/keyrings/stripe.gpg
+          echo "deb [signed-by=/usr/share/keyrings/stripe.gpg] https://packages.stripe.dev/stripe-cli-debian-local stable main" | sudo tee /etc/apt/sources.list.d/stripe.list
+          sudo apt-get update
+          sudo apt-get install stripe
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install poetry
+          poetry run pip install "Django${{ matrix.django-version }}"
+          poetry install --with dev
+
+      - name: Start Stripe CLI and Capture Secret
+        env:
+          STRIPE_API_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+        run: |
+          # Start listening in background and pipe output to a file
+          stripe listen --forward-to localhost:8000/stripe/webhooks/ > stripe_log.txt 2>&1 &
+
+          # Wait a few seconds for the CLI to connect and print the secret
+          sleep 5
+
+          # Extract the webhook signing secret from the log file
+          # It looks like: "Your webhook signing secret is whsec_..."
+          WH_SECRET=$(grep -o 'whsec_[^ ]*' stripe_log.txt | head -1)
+
+          if [ -z "$WH_SECRET" ]; then
+            echo "Error: Could not capture Stripe Webhook Secret"
+            cat stripe_log.txt
+            exit 1
+          fi
+
+          echo "STRIPE_WEBHOOK_SECRET_KEY=$WH_SECRET" >> $GITHUB_ENV
+          echo "Successfully captured dynamic webhook secret."
+
+      - name: Lint with flake8
+        run: poetry run flake8 .
+
+      - name: Run tests
+        env:
+          # Map GitHub Secrets to Environment Variables
+          STRIPE_PUBLIC_KEY: ${{ secrets.STRIPE_PUBLIC_KEY }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET_KEY: ${{ secrets.STRIPE_WEBHOOK_SECRET_KEY }}
+          # The Stripe CLI specifically looks for this name:
+          STRIPE_API_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+        run: |
+          poetry run coverage run tests/project/manage.py test
+          poetry run coverage xml
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage.xml
+          name: codecov-django-ctct
+          token: ${{ secrets.CODECOV_TOKEN }}
