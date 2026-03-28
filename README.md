@@ -1,4 +1,6 @@
-# Django Stripe Hooks
+# Stripe Webhooks for Django
+
+[![codecov](https://codecov.io/gh/geoffrey-eisenbarth/django-stripe-hooks/graph/badge.svg?token=4L51B3LIUJ)](https://codecov.io/gh/geoffrey-eisenbarth/django-stripe-hooks)
 
 `django-stripe-hooks` is a Django application designed to synchronize your local database with Stripe's data models using webhooks.
 Instead of making manual API calls every time you need information, this library automatically maintains local, up-to-date copies of Stripe objects—such as Customers, Subscriptions, Products, Prices, and more—directly in your Django project.
