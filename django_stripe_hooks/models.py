@@ -173,9 +173,6 @@ class Product(StripeModel[stripe.Product]):
     verbose_name_plural = _("Products")
     ordering = ['pk']
 
-  def __str__(self) -> str:
-    return self.name
-
 
 class Price(StripeModel[stripe.Price]):
   """Django implementation of Stripe Prices.
@@ -296,15 +293,6 @@ class Price(StripeModel[stripe.Price]):
   class Meta(StripeModel.Meta):
     verbose_name = _("Price")
     verbose_name_plural = _("Price")
-
-  def __str__(self) -> str:
-    if self.type == 'recurring' and self.interval == 'year':
-      s = f"{self.nickname} (${self.unit_amount} annually)"
-    elif self.type == 'recurring' and self.interval == 'month':
-      s = f"{self.nickname} (${self.unit_amount} monthly)"
-    else:
-      s = self.nickname
-    return s
 
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Price) -> Deserialized:
@@ -445,9 +433,6 @@ class Coupon(StripeModel[stripe.Coupon]):
       terms = f'${self.amount_off} off {self.duration}'
     return terms
 
-  def __str__(self) -> str:
-    return self.name
-
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Coupon) -> Deserialized:
     data, related_objs = super().deserialize(stripe_obj)
@@ -526,9 +511,6 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
     verbose_name = _("Promotion Code")
     verbose_name_plural = _("Promotion Codes")
 
-  def __str__(self) -> str:
-    return self.code
-
   def save(self, *args: Any, **kwargs: Any) -> None:
     """Extra logic to determine if a promotion code should be deactivated.
 
@@ -568,9 +550,6 @@ class Customer(StripeModel[stripe.Customer]):
     blank=True,
     verbose_name=_("Phone number"),
   )
-
-  def __str__(self) -> str:
-    return self.email
 
 
 class PaymentMethod(StripeModel[stripe.PaymentMethod]):
@@ -657,9 +636,7 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
     verbose_name_plural = _("Payment Methods")
     ordering = ['-card_exp_year', '-card_exp_month']
 
-  def __str__(self) -> str:
-    return self.card_info()
-
+  @property
   def card_info(self) -> str:
     s = "{brand} {bullets} {bullets} {bullets} {last4}".format(
       brand=dict(self.CARD_BRANDS)[self.card_brand],
@@ -841,6 +818,7 @@ class ConfirmationToken(models.Model):
   def is_expired(self) -> bool:
     return (self.expires_at < timezone.now())
 
+  @property
   def card_info(self) -> str:
     s = "{brand} {bullets} {bullets} {bullets} {last4}".format(
       brand=dict(PaymentMethod.CARD_BRANDS)[self.card_brand],
@@ -1227,16 +1205,6 @@ class Invoice(StripeModel[stripe.Invoice]):
       has_prorations = False
     return has_prorations
 
-  def __str__(self) -> str:
-    s = (
-      "#{number}: {date:%Y-%m-%d} ({status})"
-    ).format(
-      number=self.number,
-      date=self.period_start,
-      status=dict(self.STATUSES)[self.status],
-    )
-    return s
-
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Invoice) -> Deserialized:
     data, related_objs = super().deserialize(stripe_obj)
@@ -1350,9 +1318,6 @@ class BalanceTransaction(StripeModel[stripe.BalanceTransaction]):
     ordering = ['-available_on', '-pk']
     get_latest_by = 'available_on'
 
-  def __str__(self) -> str:
-    return f"{self.type}: ${self.amount} {self.currency.upper()}"
-
 
 class Charge(StripeModel[stripe.Charge]):
   """Django implementation of Stripe Charges.
@@ -1441,10 +1406,6 @@ class Charge(StripeModel[stripe.Charge]):
     verbose_name_plural = _("Charges")
     ordering = ['-created']
     get_latest_by = 'created'
-
-  def __str__(self) -> str:
-    s = f"${self.amount} {self.currency.upper()} on {self.created:%b %d, %Y}"
-    return s
 
 
 class Refund(StripeModel[stripe.Refund]):
