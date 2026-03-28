@@ -1,7 +1,7 @@
 [project]
 name = 'django-stripe-hooks'
 version = '0.0.1dev1'
-description = 'Webhooks for syncing Stripe payment data with your Django database.'
+description = 'Webhooks for syncing Stripe payment data to your Django database.'
 authors = [
     {name = 'Geoffrey Eisenbarth',email = 'geoffrey.eisenbarth@gmail.com'}
 ]
@@ -28,7 +28,7 @@ django-stubs-ext = '^6.0.1'
 ipython = '^9.11.0'
 django-environ = '^0.13.0'
 ipdb = '^0.13.13'
-pytest-cov = "^7.1.0"
+pytest-cov = '^7.1.0'
 
 [build-system]
 requires = ['poetry-core>=2.0.0,<3.0.0']
@@ -49,7 +49,7 @@ plugins = ['mypy_django_plugin.main']
 ignore_missing_imports = true
 explicit_package_bases = true
 packages = ['django_stripe_hooks', 'tests']
-exclude = ["tests/project/manage.py", "tests/project/project"]
+exclude = ['tests/project/manage.py', 'tests/project/project', 'tests/']
 
 [tool.django-stubs]
 django_settings_module = 'tests.project.project.settings'

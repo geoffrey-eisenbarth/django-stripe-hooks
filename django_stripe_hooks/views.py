@@ -5,7 +5,6 @@ import stripe
 from django.conf import settings
 from django.http import HttpRequest, HttpResponse
 from django.utils.decorators import method_decorator
-from django.utils.translation import gettext_lazy as _
 from django.views.decorators.csrf import csrf_exempt
 from django.views.generic.base import View
 
@@ -16,18 +15,41 @@ from django_stripe_hooks.models import (
 )
 
 
+DJANGO_MODELS = {
+  DjangoModel.__name__: DjangoModel
+  for DjangoModel in StripeModel.__subclasses__()
+}
+
+EVENT_NAMES = """
+customer_created
+promotion_code_updated
+payment_method_attached
+payment_method_automatically_updated
+invoice_updated:
+  invoice_finalized
+  invoice_voided
+  invoice_paid
+customer_subscription_created (create SubscriptionItems too?)
+customer_subscription_updated
+charge_refunded
+charge_succeeded
+
+customer_deleted
+customer_subscription_deleted (not deleted, just set to status=cancelled)
+
+"""
+
+
 @method_decorator(csrf_exempt, name='dispatch')
 class StripeWebhooks(View):
   """Intercept Stripe webhooks and update local database."""
 
   def resolve_django_model(self, stripe_name: str) -> type[StripeModel[Any]]:
-    target = stripe_name.replace('_', '').lower()
-    for DjangoModel in StripeModel.__subclasses__():
-      if DjangoModel.__name__.lower() == target:
-        return DjangoModel
-    raise LookupError(_(
-      f"No StripeModel found for '{stripe_name}'"
+    django_model_name = ''.join(map(
+      lambda s: s.title(),
+      stripe_name.split('_'),
     ))
+    return DJANGO_MODELS[django_model_name]
 
   def post(self, request: HttpRequest) -> HttpResponse:
     # Construct the event
@@ -37,41 +59,35 @@ class StripeWebhooks(View):
       secret=settings.STRIPE_WEBHOOK_SECRET_KEY,
     )
 
-    """Event names:
-    customer_created
-    promotion_code_updated
-    payment_method_attached
-    payment_method_automatically_updated
-    invoice_updated:
-      invoice_finalized
-      invoice_voided
-      invoice_paid
-    customer_subscription_created (create SubscriptionItems too?)
-    customer_subscription_updated
-    charge_refunded
-    charge_succeeded
+    try:
+      # Resolve the related Django Model
+      DjangoModel = self.resolve_django_model(self.event.data.object.object)
+    except KeyError as e:
+      django_model_name = e.args[0]
+      response = HttpResponse(
+        f"[django-stripe-hooks] {django_model_name} not implemented.",
+        status=500,
+      )
+    else:
+      # Refresh from Stripe and create/update locally
+      StripeClass = getattr(stripe, DjangoModel.__name__)
+      self.stripe_obj = StripeClass.retrieve(self.event.data.object.id)
+      self.django_obj = DjangoModel.from_stripe(self.stripe_obj)
+      response = HttpResponse(
+        "[django-stripe-hooks] Success!",
+        status=200,
+      )
+    finally:
+      # Allow authors to hook in
+      author_hook = self.event.type.replace('.', '_')
+      if hasattr(self, author_hook):
+        response = getattr(self, author_hook)() or response
 
-    customer_deleted
-    customer_subscription_deleted (not deleted, just set to status=cancelled)
-
-    """
-
-    # Refresh from Stripe and create/update locally
-    DjangoModel = self.resolve_django_model(self.event.data.object.object)
-    StripeClass = getattr(stripe, DjangoModel.__name__)
-    self.stripe_obj = StripeClass.retrieve(self.event.data.object.id)
-    self.django_obj = DjangoModel.from_stripe(self.stripe_obj)
-
-    # Allow authors to hook in
-    author_hook = self.event.type.replace('.', '_')
-    if hasattr(self, author_hook):
-      getattr(self, author_hook)()
-
-    return HttpResponse('Success!', status=200)
+    return response
 
   # TODO: related_objs
   # TODO: how to expand=['payment_method']?
-  def invoice_updated(self) -> None:
+  def invoice_updated(self) -> HttpResponse | None:
     # Update or create related objects locally
     if self.stripe_obj.payment_intent:
       stripe_pi = stripe.PaymentIntent.retrieve(
@@ -94,8 +110,10 @@ class StripeWebhooks(View):
     # Update or create Invoice locally
     Invoice.from_stripe(self.stripe_obj)
 
+    return None
+
   # TODO: related_objs
-  def charge_refunded(self) -> None:
+  def charge_refunded(self) -> HttpResponse | None:
     for stripe_re in self.stripe_obj.refunds.data:
       stripe_txn = stripe.BalanceTransaction.retrieve(
         stripe_re.balance_transaction
@@ -103,8 +121,10 @@ class StripeWebhooks(View):
       BalanceTransaction.from_stripe(stripe_txn)
       Refund.from_stripe(stripe_re)
 
+    return None
+
   # TODO: related_objs
-  def charge_succeeded(self) -> None:
+  def charge_succeeded(self) -> HttpResponse | None:
     # Create the related BalanceTransaction first
     stripe_txn = stripe.BalanceTransaction.retrieve(
       self.stripe_obj.balance_transaction
@@ -113,3 +133,5 @@ class StripeWebhooks(View):
 
     # Now create the Charge
     Charge.from_stripe(self.stripe_obj)
+
+    return None

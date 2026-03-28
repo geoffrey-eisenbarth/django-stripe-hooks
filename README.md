@@ -132,7 +132,7 @@ To generate a coverage report and XML for CI:
 
 If you encounter `OSError: [Errno 98] Address already in use`, run `pkill stripe` to clear any hanging CLI processes.
 
-Detailed logs for the webhook forwarding can be found in `stripe_cli.log`.
+Detailed logs for the webhook forwarding can be found in `tests/stripe_cli.log`.
 
 
 ## License

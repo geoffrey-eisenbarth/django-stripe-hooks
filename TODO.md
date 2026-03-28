@@ -1,5 +1,13 @@
 - Migrate to StripeClient()
- - https://github.com/stripe/stripe-python/wiki/Migration-guide-for-v8-(StripeClient)
+  - https://github.com/stripe/stripe-python/wiki/Migration-guide-for-v8-(StripeClient)
 - Finish testing suite
-- Create pypi and testpypi entries
-- Add github/actions/publish.yml
+  - refund
+  - charge
+  - balance transactio
+  - ConfirmationTokens
+- Set up precommit
+- README:
+  - Describe how to set webhooks in Stripe, get API keys
+  - document author hooks:
+    - can optionally return response or None
+    - stripe_obj / django_obj will be None if failed

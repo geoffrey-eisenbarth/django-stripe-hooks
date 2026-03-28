@@ -10,6 +10,7 @@ from django.conf import settings
 
 
 WEBHOOK_URL = 'localhost:8888/stripe/webhooks/'
+STRIPE_LOG = 'tests/stripe_cli.log'
 
 
 @pytest.fixture(scope='session', autouse=True)
@@ -27,7 +28,7 @@ def stripe_cli_setup() -> Generator[None, None, None]:
   and updates Django settings for the duration of the test session.
   """
 
-  log_file = open('stripe_cli.log', 'w')
+  log_file = open(STRIPE_LOG, 'w')
 
   # Get Stripe keys from env and inject to process environment
   stripe_key = getattr(settings, "STRIPE_SECRET_KEY", None)
@@ -41,7 +42,7 @@ def stripe_cli_setup() -> Generator[None, None, None]:
 
   # Start the Stripe CLI listener in the background
   process = subprocess.Popen(
-    ['stripe', 'listen', '--forward-to', WEBHOOK_URL],
+    ['stripe', 'listen', '--forward-to', WEBHOOK_URL, '--log-level', 'debug'],
     stdout=log_file,
     stderr=subprocess.STDOUT,
     text=True,
@@ -55,7 +56,7 @@ def stripe_cli_setup() -> Generator[None, None, None]:
   # Wait up to 10 seconds for the secret to appear in the logs
   while time.time() - start_time < 10:
     log_file.flush()  # Force write to disk so we can read it
-    with open('stripe_cli.log', 'r') as f:
+    with open(STRIPE_LOG, 'r') as f:
       content = f.read()
       if 'whsec_' in content:
         match = re.search(r'whsec_[a-zA-Z0-9]+', content)
@@ -70,7 +71,7 @@ def stripe_cli_setup() -> Generator[None, None, None]:
     pytest.exit(
       'Failed to capture secret. '
       f'CLI Exit Code: {process.poll()}. '
-      'Check stripe_cli.log'
+      f'Check {STRIPE_LOG}'
     )
 
   # Inject the secret into Django settings
@@ -83,4 +84,5 @@ def stripe_cli_setup() -> Generator[None, None, None]:
     # Shutdown the CLI after tests are done
     process.terminate()
     process.wait()
+
     log_file.close()

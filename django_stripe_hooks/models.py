@@ -34,6 +34,7 @@ def has_manager(val: Any) -> TypeGuard[Type[ManagedModel]]:
 
 
 CURRENCIES = (
+  ('', _("N/A")),
   ('usd', _("US Dollars")),
 )
 
@@ -62,17 +63,23 @@ class StripeModel(models.Model, Generic[T]):
   @classmethod
   def stripe_clean(cls, field: models.Field[Any, Any], value: Any) -> Any:
     """Cleans a value from the Stripe API for a Django model."""
-    if isinstance(field, models.DateTimeField):
+    if isinstance(field, models.CharField):
+      if (value is None) and not field.null:
+        value = ''
+    elif isinstance(field, models.DateTimeField):
       value = dt.datetime.fromtimestamp(value, tz=dt.timezone.utc)
+    elif isinstance(field, models.IntegerField):
+      if (value is None) and not field.null:
+        value = 0
     elif isinstance(field, models.DecimalField):
       try:
         value = Decimal(value / 100)
       except TypeError:
         value = Decimal(0)
     elif isinstance(field, models.JSONField):
-      value = value.get('data', value)
+      value = getattr(value, 'data', value) or field.default()
     elif isinstance(field, (models.ForeignKey, models.OneToOneField)):
-      value = value.get('id', value)
+      value = getattr(value, 'id', value)
     elif isinstance(field, models.ManyToManyField):
       RelatedModel = field.related_model
       assert has_manager(RelatedModel)
@@ -95,13 +102,13 @@ class StripeModel(models.Model, Generic[T]):
 
     data, related_objs = {}, {}
 
-    stripe_dict = stripe_obj.to_dict_recursive()
-
     for field in cls._meta.fields:
-      if (value := stripe_dict.get(field.name)) is not None:
-        value = cls.stripe_clean(field, value)
+      if field.name in stripe_obj:
+        value = cls.stripe_clean(field, getattr(stripe_obj, field.name))
         if isinstance(value, QuerySet):
           related_objs[field.name] = value
+        elif isinstance(field, (models.ForeignKey, models.OneToOneField)):
+          data[field.attname] = value
         else:
           data[field.name] = value
 
@@ -113,10 +120,12 @@ class StripeModel(models.Model, Generic[T]):
     """Updates or creates a Django instance from a Stripe API object."""
 
     data, related_objs = cls.deserialize(stripe_obj)
+
     django_obj, created = cls.objects.update_or_create(
       id=data.pop('id'),
       defaults=data,
     )
+
     for field_name, queryset in related_objs.items():
       getattr(django_obj, field_name).set(queryset)
 
@@ -384,6 +393,7 @@ class Coupon(StripeModel[stripe.Coupon]):
     verbose_name=_("Currency"),
   )
   percent_off = models.PositiveIntegerField(
+    default=0,
     verbose_name=_("Percent off"),
     help_text=_(
       "Percent that will be taken off of a subscription"
@@ -415,14 +425,14 @@ class Coupon(StripeModel[stripe.Coupon]):
     ),
   )
   max_redemptions = models.PositiveIntegerField(
-    blank=True,
-    null=True,
+    default=0,
     verbose_name=_("Maximum number of redemptions"),
     help_text=_(
       "Optional, leave blank for infinite redemptions"
     ),
   )
   times_redeemed = models.PositiveIntegerField(
+    default=0,
     editable=False,
     verbose_name=_("Current number of redemptions"),
   )
@@ -441,7 +451,9 @@ class Coupon(StripeModel[stripe.Coupon]):
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Coupon) -> Deserialized:
     data, related_objs = super().deserialize(stripe_obj)
-    if stripe_obj.applies_to is not None:
+    # TODO: `applies_to` only available if retrieved+expanded
+    # if stripe_obj.applies_to is not None:
+    if hasattr(stripe_obj, 'applies_to') and stripe_obj.applies_to is not None:
       assert has_manager(Product)
       related_objs['products'] = Product.objects.filter(
         id__in=stripe_obj.applies_to.products,
@@ -483,14 +495,14 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
     ),
   )
   max_redemptions = models.PositiveIntegerField(
-    blank=True,
-    null=True,
+    default=0,
     verbose_name=_("Maximum number of redemptions"),
     help_text=_(
       "Optional, leave blank for infinite redemptions"
     ),
   )
   times_redeemed = models.PositiveIntegerField(
+    default=0,
     editable=False,
     verbose_name=_("Current number of redemptions"),
   )
@@ -601,9 +613,6 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
     ('unknown', _("Unknown")),
   )
 
-  is_default = models.BooleanField(
-    verbose_name=_("Default payment method?"),
-  )
   is_attached = models.BooleanField(
     verbose_name=_("Attached?"),
   )
@@ -646,7 +655,7 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
   class Meta(StripeModel.Meta):
     verbose_name = _("Payment Method")
     verbose_name_plural = _("Payment Methods")
-    ordering = ['-is_default', '-card_exp_year', '-card_exp_month']
+    ordering = ['-card_exp_year', '-card_exp_month']
 
   def __str__(self) -> str:
     return self.card_info()
@@ -657,8 +666,6 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
       bullets='\u2022' * 4,
       last4=self.card_last4,
     )
-    if self.is_default:
-      s += " (default)"
     return s
 
   @classmethod
@@ -668,7 +675,7 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
     data['is_attached'] = bool(stripe_obj.customer)
 
     if stripe_obj.billing_details.address is not None:
-      data['zip_code'] = stripe_obj.billing_details.address.postal_code
+      data['zip_code'] = stripe_obj.billing_details.address.postal_code or ''
 
     if stripe_obj.card is not None:
       data.update({
@@ -717,12 +724,6 @@ class PaymentIntent(StripeModel[stripe.PaymentIntent]):
     max_length=3,
     choices=CURRENCIES,
     verbose_name=_("Currency"),
-  )
-  confirm = models.BooleanField(
-    verbose_name=_("Confirm immediately?"),
-    help_text=_(
-      "Whether to try and confirm this payment intent immediately"
-    ),
   )
   description = models.CharField(
     max_length=255,
