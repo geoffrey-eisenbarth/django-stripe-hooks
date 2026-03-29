@@ -50,12 +50,12 @@ class StripeWebhooks(View):
 
   def get_stripe_service_params(self, stripe_name: str) -> dict[str, Any]:
     params = {}
-    if stripe_name == 'coupon':
-      params['expand'] = ['applies_to']
-    elif stripe_name == 'promotion_code':
-      params['expand'] = ['promotion.coupon']
-    elif stripe_name == 'invoice':
-      params['expand'] = ['subscription']
+    expands = {
+      'coupon': ['applies_to'],
+      'promotion_code': ['promotion.coupon'],
+    }
+    if expand := expands.get(stripe_name):
+      params['expand'] = expand
     return params
 
   def post(self, request: HttpRequest) -> HttpResponse:

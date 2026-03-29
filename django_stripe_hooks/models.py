@@ -2,14 +2,13 @@ import datetime as dt
 from decimal import Decimal
 from typing import (
   Type, TypeVar, Generic, TypeGuard, Protocol, runtime_checkable,
-  Any, Self, Tuple,
+  Any, Self, Tuple, Iterable
 )
 
 import stripe
 
 from django.core.validators import RegexValidator
 from django.db import models
-from django.db.models import QuerySet
 from django.utils import timezone
 from django.utils.functional import cached_property
 from django.utils.safestring import mark_safe
@@ -17,7 +16,7 @@ from django.utils.translation import gettext_lazy as _
 
 
 T = TypeVar("T", bound=stripe.StripeObject)
-Deserialized = Tuple[dict[str, Any], dict[str, QuerySet[models.Model]]]
+Deserialized = Tuple[dict[str, Any], dict[str, Iterable[models.Model]]]
 
 
 @runtime_checkable
@@ -57,7 +56,11 @@ class StripeModel(models.Model, Generic[T]):
     abstract = True
 
   @classmethod
-  def stripe_clean(cls, field: models.Field[Any, Any], value: Any) -> Any:
+  def stripe_clean(
+    cls,
+    field: models.Field[Any, Any] | models.ForeignObjectRel,
+    value: Any,
+  ) -> Any:
     """Cleans a value from the Stripe API for a Django model."""
     if isinstance(field, models.CharField):
       if (value is None) and not field.null:
@@ -76,7 +79,12 @@ class StripeModel(models.Model, Generic[T]):
       value = getattr(value, 'data', value) or field.default()
     elif isinstance(field, (models.ForeignKey, models.OneToOneField)):
       value = getattr(value, 'id', value)
+
+    elif isinstance(field, models.ManyToOneRel):
+      # Related objects can't exist yet, get list of Stripe objects
+      value = value.get('data')
     elif isinstance(field, models.ManyToManyField):
+      # Related objects must already exist, get QuerySet of Django objects
       RelatedModel = field.related_model
       assert has_manager(RelatedModel)
       value = RelatedModel.objects.filter(
@@ -86,22 +94,16 @@ class StripeModel(models.Model, Generic[T]):
 
   @classmethod
   def deserialize(cls, stripe_obj: T) -> Deserialized:
-    """Convert Stripe object to model field values.
-
-    Notes
-    -----
-    For default cases, we uses the `model_to_dict` function,
-    but this method should be overridden when necessary, since
-    our structure isn't exactly one-to-one with Stripe's.
-
-    """
+    """Convert Stripe object to model field values."""
 
     data, related_objs = {}, {}
 
-    for field in cls._meta.fields:
+    for field in cls._meta.get_fields():
       if field.name in stripe_obj:
-        value = cls.stripe_clean(field, getattr(stripe_obj, field.name))
-        if isinstance(value, QuerySet):
+
+        value = cls.stripe_clean(field, stripe_obj.get(field.name))
+
+        if isinstance(field, (models.ManyToOneRel, models.ManyToManyField)):
           related_objs[field.name] = value
         elif isinstance(field, (models.ForeignKey, models.OneToOneField)):
           data[field.attname] = value
@@ -122,8 +124,16 @@ class StripeModel(models.Model, Generic[T]):
       defaults=data,
     )
 
-    for field_name, queryset in related_objs.items():
-      getattr(django_obj, field_name).set(queryset)
+    for field_name, objs in related_objs.items():
+      field = cls._meta.get_field(field_name)
+      if isinstance(field, models.ManyToManyField):
+        getattr(django_obj, field_name).set(objs)
+      elif isinstance(field, models.ManyToOneRel):
+        RelatedModel = field.related_model
+        assert has_manager(RelatedModel)
+        assert issubclass(RelatedModel, StripeModel)
+        for related_obj in objs:
+          RelatedModel.from_stripe(related_obj)
 
     return django_obj
 
@@ -293,11 +303,11 @@ class Price(StripeModel[stripe.Price]):
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Price) -> Deserialized:
     data, related_objs = super().deserialize(stripe_obj)
-    if stripe_obj.recurring is not None:
+    if (recurring := stripe_obj.get('recurring')) is not None:
       data.update({
-        'interval': stripe_obj.recurring.interval,
-        'interval_count': stripe_obj.recurring.interval_count,
-        'usage_type': stripe_obj.recurring.usage_type,
+        'interval': recurring.interval,
+        'interval_count': recurring.interval_count,
+        'usage_type': recurring.usage_type,
       })
     return data, related_objs
 
@@ -432,10 +442,10 @@ class Coupon(StripeModel[stripe.Coupon]):
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Coupon) -> Deserialized:
     data, related_objs = super().deserialize(stripe_obj)
-    if hasattr(stripe_obj, 'applies_to') and stripe_obj.applies_to is not None:
+    if (applies_to := stripe_obj.get('applies_to')) is not None:
       assert has_manager(Product)
       related_objs['products'] = Product.objects.filter(
-        id__in=stripe_obj.applies_to.products,
+        id__in=applies_to.products,
       )
     return data, related_objs
 
@@ -656,12 +666,12 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
     if stripe_obj.billing_details.address is not None:
       data['zip_code'] = stripe_obj.billing_details.address.postal_code or ''
 
-    if stripe_obj.card is not None:
+    if (card := stripe_obj.get('card')) is not None:
       data.update({
-        'card_brand': stripe_obj.card.brand,
-        'card_last4': stripe_obj.card.last4,
-        'card_exp_month': stripe_obj.card.exp_month,
-        'card_exp_year': stripe_obj.card.exp_year,
+        'card_brand': card.brand,
+        'card_last4': card.last4,
+        'card_exp_month': card.exp_month,
+        'card_exp_year': card.exp_year,
       })
     return data, related_objs
 
@@ -1045,9 +1055,6 @@ class SubscriptionItem(StripeModel[stripe.SubscriptionItem]):
   )
   current_period_end = models.DateTimeField(
     verbose_name=_("Current period end"),
-  )
-  deleted = models.BooleanField(
-    verbose_name=_("Deleted?"),
   )
   subscription = models.ForeignKey(
     Subscription,
