@@ -23,7 +23,7 @@ class TestStripeWebhooks:
 
   @pytest.fixture(autouse=True)
   def setup_stripe(self) -> None:
-    stripe.api_key = settings.STRIPE_SECRET_KEY
+    self.stripe_client = stripe.StripeClient(settings.STRIPE_SECRET_KEY)
 
   @pytest.fixture(autouse=True)
   def fail_on_server_exception(self) -> Generator[None, None, None]:
@@ -72,30 +72,33 @@ class TestStripeWebhooks:
     """Integration testing for Product and Billing primatives."""
 
     # Product primatives
-    s_product = stripe.Product.create(
-      name=f'Test Product {time.time()}',
-      description='Description for test product',
-      statement_descriptor='STATEMENT',
-      metadata={'category': 'Test Product'},
-    )
-    s_price = stripe.Price.create(
-      product=s_product.id,
-      nickname='Test Nickname',
-      unit_amount=2000,
-      currency='usd',
-      recurring={'interval': 'year'},
-      metadata={'category': 'Test Price'},
-    )
-    s_coupon = stripe.Coupon.create(
-      name='Test Coupon',
-      percent_off=20,
-      duration='once',
-      applies_to={'products': [s_product.id]},
-    )
-    s_promo = stripe.PromotionCode.create(
-      coupon=s_coupon.id,
-      code=f'PROMO_{int(time.time())}'
-    )
+    s_product = self.stripe_client.v1.products.create(params={
+      'name': f'Test Product {time.time()}',
+      'description': 'Description for test product',
+      'statement_descriptor': 'STATEMENT',
+      'metadata': {'category': 'Test Product'},
+    })
+    s_price = self.stripe_client.v1.prices.create(params={
+      'product': s_product.id,
+      'nickname': 'Test Nickname',
+      'unit_amount': 2000,
+      'currency': 'usd',
+      'recurring': {'interval': 'year'},
+      'metadata': {'category': 'Test Price'},
+    })
+    s_coupon = self.stripe_client.v1.coupons.create(params={
+      'name': 'Test Coupon',
+      'percent_off': 20,
+      'duration': 'once',
+      'applies_to': {'products': [s_product.id]},
+    })
+    s_promo = self.stripe_client.v1.promotion_codes.create(params={
+      'promotion': {
+        'type': 'coupon',
+        'coupon': s_coupon.id,
+      },
+      'code': f'PROMO_{int(time.time())}'
+    })
 
     d_product = self.wait_for_object(stripe_models.Product, id=s_product.id)
     d_price = self.wait_for_object(stripe_models.Price, id=s_price.id)
@@ -103,31 +106,33 @@ class TestStripeWebhooks:
     d_promo = self.wait_for_object(stripe_models.PromotionCode, id=s_promo.id)
 
     # Billing primatives
-    s_customer = stripe.Customer.create(
-      name='Test Customer',
-      email='test@customer.com',
-    )
-    s_payment_method = stripe.PaymentMethod.create(
-      type='card',
-      card={'token': 'tok_visa'},
-    )
-    stripe.PaymentMethod.attach(
+    s_customer = self.stripe_client.v1.customers.create(params={
+      'name': 'Test Customer',
+      'email': 'test@customer.com',
+    })
+    s_payment_method = self.stripe_client.v1.payment_methods.create(params={
+      'type': 'card',
+      'card': {'token': 'tok_visa'},
+    })
+    self.stripe_client.v1.payment_methods.attach(
       s_payment_method.id,
-      customer=s_customer.id,
+      params={'customer': s_customer.id},
     )
-    s_subscription = stripe.Subscription.create(
-      customer=s_customer.id,
-      items=[{'price': s_price.id, 'quantity': 1}],
-      discounts=[{'promotion_code': s_promo.id}],
-      default_payment_method=s_payment_method.id,
-      collection_method='charge_automatically',
-      payment_behavior='default_incomplete',
-    )
-    s_fi = stripe.Customer.create_funding_instructions(
+    s_subscription = self.stripe_client.v1.subscriptions.create(params={
+      'customer': s_customer.id,
+      'items': [{'price': s_price.id, 'quantity': 1}],
+      'discounts': [{'promotion_code': s_promo.id}],
+      'default_payment_method': s_payment_method.id,
+      'collection_method': 'charge_automatically',
+      'payment_behavior': 'default_incomplete',
+    })
+    s_fi = self.stripe_client.v1.customers.funding_instructions.create(
       s_customer.id,
-      funding_type='bank_transfer',
-      bank_transfer={'type': 'us_bank_transfer'},
-      currency='usd',
+      params={
+        'funding_type': 'bank_transfer',
+        'bank_transfer': {'type': 'us_bank_transfer'},
+        'currency': 'usd',
+      },
     )
 
     d_customer = self.wait_for_object(

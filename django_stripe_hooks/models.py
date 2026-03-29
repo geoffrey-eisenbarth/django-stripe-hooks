@@ -7,7 +7,6 @@ from typing import (
 
 import stripe
 
-from django.conf import settings
 from django.core.validators import RegexValidator
 from django.db import models
 from django.db.models import QuerySet
@@ -16,9 +15,6 @@ from django.utils.functional import cached_property
 from django.utils.safestring import mark_safe
 from django.utils.translation import gettext_lazy as _
 
-
-stripe.api_key = settings.STRIPE_SECRET_KEY
-stripe.api_version = settings.STRIPE_API_VERSION
 
 T = TypeVar("T", bound=stripe.StripeObject)
 Deserialized = Tuple[dict[str, Any], dict[str, QuerySet[models.Model]]]
@@ -436,8 +432,6 @@ class Coupon(StripeModel[stripe.Coupon]):
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Coupon) -> Deserialized:
     data, related_objs = super().deserialize(stripe_obj)
-    # TODO: `applies_to` only available if retrieved+expanded
-    # if stripe_obj.applies_to is not None:
     if hasattr(stripe_obj, 'applies_to') and stripe_obj.applies_to is not None:
       assert has_manager(Product)
       related_objs['products'] = Product.objects.filter(
@@ -506,6 +500,12 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
     else:
       maximum = '&infin;'
     return mark_safe(f"{count} of {maximum}")
+
+  @classmethod
+  def deserialize(cls, stripe_obj: stripe.PaymentMethod) -> Deserialized:
+    data, related_objs = super().deserialize(stripe_obj)
+    data['coupon_id'] = stripe_obj.promotion.coupon.id
+    return data, related_objs
 
   class Meta(StripeModel.Meta):
     verbose_name = _("Promotion Code")
@@ -953,12 +953,6 @@ class Subscription(StripeModel[stripe.Subscription]):
     choices=STATUSES,
     verbose_name=_("Status"),
   )
-  current_period_start = models.DateTimeField(
-    verbose_name=_("Current period start"),
-  )
-  current_period_end = models.DateTimeField(
-    verbose_name=_("Current period end"),
-  )
   cancel_at_period_end = models.BooleanField(
     verbose_name=_("Cancel at period end?"),
   )
@@ -1016,6 +1010,14 @@ class Subscription(StripeModel[stripe.Subscription]):
 
     return data, related_objs
 
+  @cached_property
+  def current_period_start(self) -> dt.datetime:
+    return min(item.current_period_start for item in self.items.all())
+
+  @cached_property
+  def current_period_end(self) -> dt.datetime:
+    return max(item.current_period_start for item in self.items.all())
+
 
 class SubscriptionItem(StripeModel[stripe.SubscriptionItem]):
   """Django implementation of Stripe Subscription Items.
@@ -1035,6 +1037,12 @@ class SubscriptionItem(StripeModel[stripe.SubscriptionItem]):
   )
   quantity = models.PositiveIntegerField(
     verbose_name=_("Quantity"),
+  )
+  current_period_start = models.DateTimeField(
+    verbose_name=_("Current period start"),
+  )
+  current_period_end = models.DateTimeField(
+    verbose_name=_("Current period end"),
   )
   deleted = models.BooleanField(
     verbose_name=_("Deleted?"),
@@ -1208,14 +1216,16 @@ class Invoice(StripeModel[stripe.Invoice]):
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Invoice) -> Deserialized:
     data, related_objs = super().deserialize(stripe_obj)
-    if discounts := stripe_obj.total_discount_amounts:
-      data['discount'] = Decimal(0)
-      for discount in discounts:
-        data['discount'] -= Decimal(discount.amount / 100)
-    if taxes := stripe_obj.total_taxes:
-      data['tax'] = Decimal(0)
-      for tax in taxes:
-        data['tax'] += Decimal(taxes[0].amount / 100)
+
+    data['subscription_id'] = stripe_obj.parent.subscription_details.subscription  # noqa: E501
+
+    data['discount'] = Decimal(0)
+    for discount in stripe_obj.total_discount_amounts:
+      data['discount'] -= Decimal(discount.amount / 100)
+
+    data['tax'] = Decimal(0)
+    for tax in stripe_obj.total_taxes:
+      data['tax'] += Decimal(taxes[0].amount / 100)
     return data, related_objs
 
 

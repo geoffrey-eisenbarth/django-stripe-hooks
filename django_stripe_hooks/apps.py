@@ -11,7 +11,6 @@ class StripeConfig(AppConfig):
     'STRIPE_PUBLIC_KEY',
     'STRIPE_SECRET_KEY',
     'STRIPE_WEBHOOK_SECRET_KEY',
-    'STRIPE_API_VERSION',
   ]
 
   def ready(self) -> None:

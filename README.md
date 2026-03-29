@@ -58,8 +58,11 @@ STRIPE_WEBHOOK_SECRET = "whsec_..."
 Important: Store your API credentials securely.
 Avoid committing them directly to your version control repository.
 
-**Make sure Stripe is sending their webhook request to the proper address.
-This must be set up on your Stripe Dashboard.**
+Make sure Stripe is sending their webhook request to the proper address.
+This must be set up on your Stripe Dashboard.
+
+**Important**: This app pins the Python Stripe SDK to version 14, which utilizes API version `2026-02-25.clover`.
+You must set your webhook version to `2026-02-25.clover` in your Stripe Dashboard to ensure webhooks use the correct request format.
 
 5) Run Migrations:
 

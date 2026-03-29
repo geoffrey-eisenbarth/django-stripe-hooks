@@ -11,6 +11,7 @@ from django.conf import settings
 
 WEBHOOK_URL = 'localhost:8888/stripe/webhooks/'
 STRIPE_LOG = 'tests/stripe_cli.log'
+STRIPE_VERSION = '2026-02-25.clover'  # c.f. Python SDK >= 14.4 < 15.0
 
 
 @pytest.fixture(scope='session', autouse=True)
@@ -31,18 +32,22 @@ def stripe_cli_setup() -> Generator[None, None, None]:
   log_file = open(STRIPE_LOG, 'w')
 
   # Get Stripe keys from env and inject to process environment
-  stripe_key = getattr(settings, "STRIPE_SECRET_KEY", None)
+  stripe_key = getattr(settings, 'STRIPE_SECRET_KEY', None)
   env = os.environ.copy()
   if stripe_key:
-    env["STRIPE_API_KEY"] = stripe_key
+    env['STRIPE_API_KEY'] = stripe_key
   else:
     pytest.exit(
       "STRIPE_SECRET_KEY not found in settings. Check your .env file."
     )
 
   # Start the Stripe CLI listener in the background
-  process = subprocess.Popen(
-    ['stripe', 'listen', '--forward-to', WEBHOOK_URL, '--log-level', 'debug'],
+  process = subprocess.Popen([
+    'stripe', 'listen',
+    '--forward-to', WEBHOOK_URL,
+    '--log-level', 'debug',
+    #'--stripe-version', STRIPE_VERSION,
+    ],
     stdout=log_file,
     stderr=subprocess.STDOUT,
     text=True,

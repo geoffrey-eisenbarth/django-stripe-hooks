@@ -1,10 +1,11 @@
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 import stripe
 
 from django.conf import settings
 from django.http import HttpRequest, HttpResponse
 from django.utils.decorators import method_decorator
+from django.utils.functional import cached_property
 from django.views.decorators.csrf import csrf_exempt
 from django.views.generic.base import View
 
@@ -17,9 +18,24 @@ DJANGO_MODELS = {
 }
 
 
+@runtime_checkable
+class StripeService(Protocol):
+  def retrieve(
+    self,
+    id: str,
+    params: dict[str, Any] | None = None,
+    options: dict[str, Any] | None = None,
+  ) -> Any:
+    ...
+
+
 @method_decorator(csrf_exempt, name='dispatch')
 class StripeWebhooks(View):
   """Intercept Stripe webhooks and update local database."""
+
+  @cached_property
+  def stripe_client(self) -> stripe.StripeClient:
+    return stripe.StripeClient(settings.STRIPE_SECRET_KEY)
 
   def resolve_django_model(self, stripe_name: str) -> type[StripeModel[Any]]:
     django_model_name = ''.join(map(
@@ -28,9 +44,22 @@ class StripeWebhooks(View):
     ))
     return DJANGO_MODELS[django_model_name]
 
+  def resolve_stripe_service(self, stripe_name: str) -> StripeService:
+    return getattr(self.stripe_client.v1, f'{stripe_name}s')
+
+  def get_stripe_service_params(self, stripe_name: str) -> dict[str, Any]:
+    params = {}
+    if stripe_name == 'coupon':
+      params['expand'] = ['applies_to']
+    elif stripe_name == 'promotion_code':
+      params['expand'] = ['promotion.coupon']
+    elif stripe_name == 'invoice':
+      params['expand'] = ['subscription']
+    return params
+
   def post(self, request: HttpRequest) -> HttpResponse:
     # Construct the event
-    self.event = stripe.Webhook.construct_event(  # type: ignore[no-untyped-call]  # noqa: E501
+    self.event = self.stripe_client.construct_event(
       payload=request.body,
       sig_header=request.META['HTTP_STRIPE_SIGNATURE'],
       secret=settings.STRIPE_WEBHOOK_SECRET_KEY,
@@ -38,7 +67,8 @@ class StripeWebhooks(View):
 
     try:
       # Resolve the related Django Model
-      DjangoModel = self.resolve_django_model(self.event.data.object.object)
+      stripe_name = self.event.data.object.object
+      DjangoModel = self.resolve_django_model(stripe_name)
     except KeyError as e:
       django_model_name = e.args[0]
       response = HttpResponse(
@@ -47,8 +77,11 @@ class StripeWebhooks(View):
       )
     else:
       # Refresh from Stripe and create/update locally
-      StripeClass = getattr(stripe, DjangoModel.__name__)
-      self.stripe_obj = StripeClass.retrieve(self.event.data.object.id)
+      stripe_service = self.resolve_stripe_service(stripe_name)
+      self.stripe_obj = stripe_service.retrieve(
+        self.event.data.object.id,
+        params=self.get_stripe_service_params(stripe_name),
+      )
       self.django_obj = DjangoModel.from_stripe(self.stripe_obj)
       response = HttpResponse(
         "[django-stripe-hooks] Success!",
