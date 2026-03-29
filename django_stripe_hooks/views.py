@@ -1,4 +1,4 @@
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 import stripe
 
@@ -45,7 +45,8 @@ class StripeWebhooks(View):
     return DJANGO_MODELS[django_model_name]
 
   def resolve_stripe_service(self, stripe_name: str) -> StripeService:
-    return getattr(self.stripe_client.v1, f'{stripe_name}s')
+    service = getattr(self.stripe_client.v1, f'{stripe_name}s')
+    return cast(StripeService, service)
 
   def get_stripe_service_params(self, stripe_name: str) -> dict[str, Any]:
     params = {}
@@ -67,7 +68,7 @@ class StripeWebhooks(View):
 
     try:
       # Resolve the related Django Model
-      stripe_name = self.event.data.object.object
+      stripe_name = self.event.data.object['object']  # mypy needs key access
       DjangoModel = self.resolve_django_model(stripe_name)
     except KeyError as e:
       django_model_name = e.args[0]
@@ -79,7 +80,7 @@ class StripeWebhooks(View):
       # Refresh from Stripe and create/update locally
       stripe_service = self.resolve_stripe_service(stripe_name)
       self.stripe_obj = stripe_service.retrieve(
-        self.event.data.object.id,
+        self.event.data.object['id'],  # mypy needs key access
         params=self.get_stripe_service_params(stripe_name),
       )
       self.django_obj = DjangoModel.from_stripe(self.stripe_obj)

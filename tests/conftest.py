@@ -43,10 +43,9 @@ def stripe_cli_setup() -> Generator[None, None, None]:
 
   # Start the Stripe CLI listener in the background
   process = subprocess.Popen([
-    'stripe', 'listen',
-    '--forward-to', WEBHOOK_URL,
-    '--log-level', 'debug',
-    #'--stripe-version', STRIPE_VERSION,
+      'stripe', 'listen',
+      '--forward-to', WEBHOOK_URL,
+      '--log-level', 'debug',
     ],
     stdout=log_file,
     stderr=subprocess.STDOUT,

@@ -502,9 +502,11 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
     return mark_safe(f"{count} of {maximum}")
 
   @classmethod
-  def deserialize(cls, stripe_obj: stripe.PaymentMethod) -> Deserialized:
+  def deserialize(cls, stripe_obj: stripe.PromotionCode) -> Deserialized:
     data, related_objs = super().deserialize(stripe_obj)
-    data['coupon_id'] = stripe_obj.promotion.coupon.id
+    if stripe_obj.promotion:
+      if (stripe_coupon := stripe_obj.promotion.coupon):
+        data['coupon_id'] = getattr(stripe_coupon, 'id', stripe_coupon)
     return data, related_objs
 
   class Meta(StripeModel.Meta):
@@ -1217,15 +1219,18 @@ class Invoice(StripeModel[stripe.Invoice]):
   def deserialize(cls, stripe_obj: stripe.Invoice) -> Deserialized:
     data, related_objs = super().deserialize(stripe_obj)
 
-    data['subscription_id'] = stripe_obj.parent.subscription_details.subscription  # noqa: E501
+    if stripe_obj.parent and stripe_obj.parent.subscription_details:
+      if (stripe_sub := stripe_obj.parent.subscription_details.subscription):
+        data['subscription_id'] = getattr(stripe_sub, 'id', stripe_sub)
 
     data['discount'] = Decimal(0)
-    for discount in stripe_obj.total_discount_amounts:
+    for discount in (stripe_obj.total_discount_amounts or []):
       data['discount'] -= Decimal(discount.amount / 100)
 
     data['tax'] = Decimal(0)
-    for tax in stripe_obj.total_taxes:
-      data['tax'] += Decimal(taxes[0].amount / 100)
+    for tax in (stripe_obj.total_taxes or []):
+      data['tax'] += Decimal(tax.amount / 100)
+
     return data, related_objs
 
 
