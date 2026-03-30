@@ -11,7 +11,7 @@ repos:
         additional_dependencies:
           - django-stubs
           - django-stubs-ext
-          - stripe #==14.4.1
+          - stripe==14.4.1
           - django-environ
           - pytest
           - pytest-django
