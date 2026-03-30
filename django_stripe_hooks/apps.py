@@ -4,18 +4,19 @@ from django.core.exceptions import ImproperlyConfigured
 from django.utils.translation import gettext_lazy as _
 
 
+REQUIRED_SETTINGS = [
+  'STRIPE_PUBLIC_KEY',
+  'STRIPE_SECRET_KEY',
+  'STRIPE_WEBHOOK_SECRET_KEY',
+]
+
+
 class StripeConfig(AppConfig):
   name = 'django_stripe_hooks'
   verbose_name = _('Stripe Payments')
-  required_settings = [
-    'STRIPE_PUBLIC_KEY',
-    'STRIPE_SECRET_KEY',
-    'STRIPE_WEBHOOK_SECRET_KEY',
-  ]
 
   def ready(self) -> None:
-    """Validate that necessary settings have been defined."""
-    for value in self.required_settings:
+    for value in REQUIRED_SETTINGS:
       if not hasattr(settings, value):
         message = _(
           f"[django-stripe-hooks] {value} must be defined in settings.py."

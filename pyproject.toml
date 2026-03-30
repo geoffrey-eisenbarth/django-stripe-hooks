@@ -48,9 +48,8 @@ python_version = '3.12'
 plugins = ['mypy_django_plugin.main']
 strict = true
 ignore_missing_imports = true
-explicit_package_bases = true
 packages = ['django_stripe_hooks', 'tests']
-exclude = ['tests/project/manage.py', 'tests/project/project', 'tests/']
+exclude = ['tests/project/manage.py', 'tests/project/project']
 
 [tool.django-stubs]
 django_settings_module = 'tests.project.project.settings'

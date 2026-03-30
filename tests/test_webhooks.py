@@ -1,6 +1,6 @@
 from decimal import Decimal
 import time
-from typing import Type, TypeVar, Any, Generator
+from typing import Type, TypeVar, Any, Generator, cast
 
 import stripe
 import pytest
@@ -58,10 +58,11 @@ class TestStripeWebhooks:
     **kwargs: Any,
   ) -> T:
     """Generic polling logic to detect object existence."""
+    assert stripe_models.has_manager(model_class)
     retries = timeout * 2
     while retries > 0:
       if obj := model_class.objects.filter(**kwargs).first():
-        return obj
+        return cast(T, obj)
       time.sleep(0.5)
       retries -= 1
     pytest.fail(

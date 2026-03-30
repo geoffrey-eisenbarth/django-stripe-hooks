@@ -1,8 +1,9 @@
 import datetime as dt
 from decimal import Decimal
 from typing import (
-  Type, TypeVar, Generic, TypeGuard, Protocol, runtime_checkable,
-  Any, Self, Tuple, Iterable
+  Type, TypeVar, Generic, TypeGuard, Protocol,
+  Any, Self, Tuple, Iterable,
+  runtime_checkable, cast,
 )
 
 import stripe
@@ -920,7 +921,7 @@ class FundingInstructions(models.Model):
     cls,
     customer: Customer,
     stripe_obj: stripe.FundingInstructions,
-  ) -> models.Model:
+  ) -> Self:
     """Returns a Django model instance based on Stripe API object."""
     data, related_objs = FundingInstructions.deserialize(stripe_obj)
     assert has_manager(cls)
@@ -928,7 +929,7 @@ class FundingInstructions(models.Model):
       customer=customer,
       defaults=data,
     )
-    return django_obj
+    return cast(Self, django_obj)
 
 
 class Subscription(StripeModel[stripe.Subscription]):
