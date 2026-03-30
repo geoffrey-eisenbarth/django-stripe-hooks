@@ -152,6 +152,9 @@ class Product(StripeModel[stripe.Product]):
 
   """
 
+  active = models.BooleanField(
+    verbose_name=_("Active?"),
+  )
   name = models.CharField(
     max_length=255,
     unique=True,  # Create index
@@ -434,6 +437,9 @@ class Coupon(StripeModel[stripe.Coupon]):
     editable=False,
     verbose_name=_("Current number of redemptions"),
   )
+  valid = models.BooleanField(
+    verbose_name=_("Valid?"),
+  )
 
   @property
   def terms(self) -> str:
@@ -542,6 +548,13 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
     super().save(*args, **kwargs)
 
 
+# TODO: Delete?
+# coupon.deleted
+# customer.deleted
+# customer.subscription.deleted
+# invoice.deleted
+# price.deleted
+# product.deleted
 class Customer(StripeModel[stripe.Customer]):
   """Django implementation of Stripe Customers.
 
@@ -608,9 +621,6 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
     ('unknown', _("Unknown")),
   )
 
-  is_attached = models.BooleanField(
-    verbose_name=_("Attached?"),
-  )
   type = models.CharField(
     max_length=17,
     choices=TYPES,
@@ -655,8 +665,6 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
   @classmethod
   def deserialize(cls, stripe_obj: stripe.PaymentMethod) -> Deserialized:
     data, related_objs = super().deserialize(stripe_obj)
-
-    data['is_attached'] = bool(stripe_obj.customer)
 
     if stripe_obj.billing_details.address is not None:
       data['zip_code'] = stripe_obj.billing_details.address.postal_code or ''
@@ -770,6 +778,7 @@ class PaymentIntent(StripeModel[stripe.PaymentIntent]):
     verbose_name_plural = _("Payment Intents")
 
 
+# TODO: delete?
 class ConfirmationToken(models.Model):
   """Django implementation of Stripe Confirmation Tokens.
 

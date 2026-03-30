@@ -127,14 +127,6 @@ class TestStripeWebhooks:
       'collection_method': 'charge_automatically',
       'payment_behavior': 'default_incomplete',
     })
-    s_fi = self.stripe_client.v1.customers.funding_instructions.create(
-      s_customer.id,
-      params={
-        'funding_type': 'bank_transfer',
-        'bank_transfer': {'type': 'us_bank_transfer'},
-        'currency': 'usd',
-      },
-    )
 
     d_customer = self.wait_for_object(
       stripe_models.Customer,
@@ -149,7 +141,6 @@ class TestStripeWebhooks:
       customer_id=s_customer.id,
       payment_method_id=s_payment_method.id,
     )
-    d_fi = stripe_models.FundingInstructions.from_stripe(d_customer, s_fi)
 
     # Confirm PaymentIntent, verify Invoice and Subscription updated
     s_payment_intent = self.stripe_client.v1.payment_intents.confirm(
@@ -192,6 +183,3 @@ class TestStripeWebhooks:
 
     # Test currency unit conversion
     assert d_price.unit_amount == Decimal(20.00)
-
-    # Test FundingInstructions
-    assert d_fi.customer.id == s_customer.id

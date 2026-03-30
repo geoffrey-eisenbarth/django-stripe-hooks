@@ -1,13 +1,10 @@
-- Finish testing suite
-  - ConfirmationTokens
+- Delete events:
+  - customer_deleted
+- squash migrations, un-reinstall to tpg
 
 - README:
   - Describe how to set webhooks in Stripe, get API keys
   - document author hooks:
     - can optionally return response or None
     - stripe_obj / django_obj will be None if failed
-- squash migrations, un-reinstall to tpg
-- Delete events:
-  - customer_deleted
-  - customer_subscription_deleted (not deleted, just status=cancelled)
-  - active vs non-active
+
