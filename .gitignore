@@ -2,7 +2,7 @@ __pycache__/
 .env
 *.py[cod]
 .*.sw*
-*.sqlite3
+*.sqlite3*
 poetry.lock
 stripe_cli.log
 .coverage

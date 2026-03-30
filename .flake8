@@ -6,5 +6,3 @@ exclude =
   __pycache__
   manage.py
   settings.py
-  local_settings.py
-  vendor.py
