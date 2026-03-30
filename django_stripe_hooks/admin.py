@@ -445,7 +445,6 @@ class ChargeAdmin(StripeModelAdmin[Charge]):
 
   list_display = (
     'customer',
-    'invoice',
     'amount',
     'status',
     'created',
@@ -455,7 +454,6 @@ class ChargeAdmin(StripeModelAdmin[Charge]):
   )
   list_select_related = (
     'customer',
-    'invoice',
   )
 
 

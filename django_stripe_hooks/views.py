@@ -53,6 +53,7 @@ class StripeWebhooks(View):
     expands = {
       'coupon': ['applies_to'],
       'promotion_code': ['promotion.coupon'],
+      'charge': ['balance_transaction'],
     }
     if expand := expands.get(stripe_name):
       params['expand'] = expand
@@ -68,7 +69,7 @@ class StripeWebhooks(View):
 
     try:
       # Resolve the related Django Model
-      stripe_name = self.event.data.object['object']  # mypy needs key access
+      stripe_name = self.event.data.object['object']  # mypy prefers key access
       DjangoModel = self.resolve_django_model(stripe_name)
     except KeyError as e:
       django_model_name = e.args[0]
@@ -80,7 +81,7 @@ class StripeWebhooks(View):
       # Refresh from Stripe and create/update locally
       stripe_service = self.resolve_stripe_service(stripe_name)
       self.stripe_obj = stripe_service.retrieve(
-        self.event.data.object['id'],  # mypy needs key access
+        self.event.data.object['id'],  # mypy prefers key access
         params=self.get_stripe_service_params(stripe_name),
       )
       self.django_obj = DjangoModel.from_stripe(self.stripe_obj)

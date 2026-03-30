@@ -87,7 +87,7 @@ class TestStripeWebhooks:
       'metadata': {'category': 'Test Price'},
     })
     s_coupon = self.stripe_client.v1.coupons.create(params={
-      'name': 'Test Coupon',
+      'name': 'Test Coupon {time.time()}',
       'percent_off': 20,
       'duration': 'once',
       'applies_to': {'products': [s_product.id]},
@@ -126,14 +126,6 @@ class TestStripeWebhooks:
       'collection_method': 'charge_automatically',
       'payment_behavior': 'default_incomplete',
     })
-    s_fi = self.stripe_client.v1.customers.funding_instructions.create(
-      s_customer.id,
-      params={
-        'funding_type': 'bank_transfer',
-        'bank_transfer': {'type': 'us_bank_transfer'},
-        'currency': 'usd',
-      },
-    )
 
     d_customer = self.wait_for_object(
       stripe_models.Customer,
@@ -147,29 +139,50 @@ class TestStripeWebhooks:
       stripe_models.Subscription,
       id=s_subscription.id,
     )
-    d_invoice = self.wait_for_object(
+    d_payment_intent = self.wait_for_object(
+      stripe_models.PaymentIntent,
+      customer_id=s_customer.id,
+      payment_method_id=s_payment_method.id,
+    )
+
+    # Confirm PaymentIntent and verify Invoice status updated
+    self.stripe_client.v1.payment_intents.confirm(
+      d_payment_intent.id,
+    )
+    self.wait_for_object(
       stripe_models.Invoice,
       timeout=20,
       customer_id=s_customer.id,
       subscription_id=s_subscription.id,
+      status='paid',
     )
 
-    # Test related objects
+    # Test ForeignKey relations
     assert d_price.product.id == d_product.id
     assert d_promo.coupon.id == d_coupon.id
     assert d_payment_method.customer.id == d_customer.id
 
+    # Test ManyToMany relations
+    assert d_coupon.products.exists()
+
+    # Test ReverseForeignKey relations
+    assert d_subscription.items.exists()
+
     # Test currency unit conversion
     assert d_price.unit_amount == Decimal(20.00)
 
-    # Confirm Invoice was updated as paid
-    d_invoice.refresh_from_db()
-    # TODO: assert d_invoice.status == 'paid'
-
-    # Confirm Subscription is active
+    # Confirm Subscription was updated as active
     d_subscription.refresh_from_db()
-    # TODO: assert d_subscription.status == 'active'
+    assert d_subscription.status == 'active'
 
-    # Confirm FundingInstructions were created
+    # Test FundingInstructions
+    s_fi = self.stripe_client.v1.customers.funding_instructions.create(
+      s_customer.id,
+      params={
+        'funding_type': 'bank_transfer',
+        'bank_transfer': {'type': 'us_bank_transfer'},
+        'currency': 'usd',
+      },
+    )
     d_fi = stripe_models.FundingInstructions.from_stripe(d_customer, s_fi)
     assert d_fi.customer.id == s_customer.id

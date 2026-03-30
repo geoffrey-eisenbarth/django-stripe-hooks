@@ -8,7 +8,7 @@ from typing import (
 import stripe
 
 from django.core.validators import RegexValidator
-from django.db import models
+from django.db import models, transaction
 from django.utils import timezone
 from django.utils.functional import cached_property
 from django.utils.safestring import mark_safe
@@ -117,25 +117,28 @@ class StripeModel(models.Model, Generic[T]):
   def from_stripe(cls, stripe_obj: T) -> Self:
     """Updates or creates a Django instance from a Stripe API object."""
 
-    data, related_objs = cls.deserialize(stripe_obj)
+    with transaction.atomic():
+      data, related_objs = cls.deserialize(stripe_obj)
 
-    django_obj, created = cls.objects.update_or_create(
-      id=data.pop('id'),
-      defaults=data,
-    )
+      django_obj, created = cls.objects.update_or_create(
+        id=data.pop('id'),
+        defaults=data,
+      )
 
-    for field_name, objs in related_objs.items():
-      field = cls._meta.get_field(field_name)
-      if isinstance(field, models.ManyToManyField):
-        getattr(django_obj, field_name).set(objs)
-      elif isinstance(field, models.ManyToOneRel):
-        RelatedModel = field.related_model
-        assert has_manager(RelatedModel)
-        assert issubclass(RelatedModel, StripeModel)
-        for related_obj in objs:
-          RelatedModel.from_stripe(related_obj)
+      for field_name, objs in related_objs.items():
+        field = cls._meta.get_field(field_name)
+        if isinstance(field, models.ManyToManyField):
+          getattr(django_obj, field_name).set(objs)
+        elif isinstance(field, models.ManyToOneRel):
+          RelatedModel = field.related_model
+          assert has_manager(RelatedModel)
+          assert issubclass(RelatedModel, StripeModel)
+          for related_obj in objs:
+            RelatedModel.from_stripe(related_obj)
+          django_obj.refresh_from_db()
 
-    return django_obj
+      django_obj.refresh_from_db()
+      return django_obj
 
 
 class Product(StripeModel[stripe.Product]):
@@ -1014,12 +1017,6 @@ class Subscription(StripeModel[stripe.Subscription]):
     if d := (stripe_discount or getattr(stripe_invoice, "discount", None)):
       data['promotion_code_id'] = d.promotion_code
 
-    # Add SubscriptionItems (must be a QuerySet)
-    assert has_manager(SubscriptionItem)
-    related_objs['items'] = SubscriptionItem.objects.filter(
-      id__in=[item.id for item in stripe_obj['items'].data]
-    )
-
     return data, related_objs
 
   @cached_property
@@ -1413,15 +1410,17 @@ class Charge(StripeModel[stripe.Charge]):
     related_name='charges',
     verbose_name=_("Balance transaction"),
   )
-  invoice = models.ForeignKey(
-    Invoice,
-    on_delete=models.CASCADE,
-    related_name='charges',
-    verbose_name=_("Invoice"),
-  )
   receipt_email = models.EmailField(
     verbose_name=_("Receipt email"),
   )
+
+  @classmethod
+  def deserialize(cls, stripe_obj: stripe.Charge) -> Deserialized:
+    data, related_objs = super().deserialize(stripe_obj)
+    if (balance_txn := stripe_obj.get('balance_transaction')) is not None:
+      BalanceTransaction.from_stripe(balance_txn)
+      data['balance_transaction_id'] = balance_txn.id
+    return data, related_objs
 
   class Meta(StripeModel.Meta):
     verbose_name = _("Charge")

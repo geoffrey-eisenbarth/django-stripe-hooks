@@ -132,3 +132,9 @@ env.read_env(Path(BASE_DIR) / '.env')
 STRIPE_PUBLIC_KEY = env.str("STRIPE_PUBLIC_KEY", default="")
 STRIPE_SECRET_KEY = env.str("STRIPE_SECRET_KEY", default="")
 STRIPE_WEBHOOK_SECRET_KEY = env.str("STRIPE_WEBHOOK_SECRET_KEY", default="")
+
+# Enable Write-Ahead Logging for sqlite to address concurrency issues
+DATABASES['default']['OPTIONS'] = {
+    'timeout': 20,  # Wait up to 20 seconds for a lock to clear
+    'init_command': 'PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;',
+}
