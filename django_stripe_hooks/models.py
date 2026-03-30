@@ -83,7 +83,7 @@ class StripeModel(models.Model, Generic[T]):
 
     elif isinstance(field, models.ManyToOneRel):
       # Related objects can't exist yet, get list of Stripe objects
-      value = value.get('data')
+      value = getattr(value, 'data', [])
     elif isinstance(field, models.ManyToManyField):
       # Related objects must already exist, get QuerySet of Django objects
       RelatedModel = field.related_model
@@ -102,7 +102,7 @@ class StripeModel(models.Model, Generic[T]):
     for field in cls._meta.get_fields():
       if field.name in stripe_obj:
 
-        value = cls.stripe_clean(field, stripe_obj.get(field.name))
+        value = cls.stripe_clean(field, getattr(stripe_obj, field.name))
 
         if isinstance(field, (models.ManyToOneRel, models.ManyToManyField)):
           related_objs[field.name] = value
@@ -307,7 +307,7 @@ class Price(StripeModel[stripe.Price]):
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Price) -> Deserialized:
     data, related_objs = super().deserialize(stripe_obj)
-    if (recurring := stripe_obj.get('recurring')) is not None:
+    if (recurring := getattr(stripe_obj, 'recurring', None)) is not None:
       data.update({
         'interval': recurring.interval,
         'interval_count': recurring.interval_count,
@@ -446,7 +446,7 @@ class Coupon(StripeModel[stripe.Coupon]):
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Coupon) -> Deserialized:
     data, related_objs = super().deserialize(stripe_obj)
-    if (applies_to := stripe_obj.get('applies_to')) is not None:
+    if (applies_to := getattr(stripe_obj, 'applies_to', None)) is not None:
       assert has_manager(Product)
       related_objs['products'] = Product.objects.filter(
         id__in=applies_to.products,
@@ -661,7 +661,7 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
     if stripe_obj.billing_details.address is not None:
       data['zip_code'] = stripe_obj.billing_details.address.postal_code or ''
 
-    if (card := stripe_obj.get('card')) is not None:
+    if (card := getattr(stripe_obj, 'card', None)) is not None:
       data.update({
         'card_brand': card.brand,
         'card_last4': card.last4,
@@ -903,11 +903,11 @@ class FundingInstructions(models.Model):
     for fa in stripe_obj.bank_transfer.financial_addresses:
       if (fa.type == 'aba') and (fa.aba is not None):
         data.update({
-          'account_holder_address': dict(fa.aba.account_holder_address),
+          'account_holder_address': fa.aba.account_holder_address.to_dict(),
           'account_holder_name': fa.aba.account_holder_name,
           'account_number': fa.aba.account_number,
           'account_type': fa.aba.account_type,
-          'bank_address': dict(fa.aba.bank_address),
+          'bank_address': fa.aba.bank_address.to_dict(),
           'bank_name': fa.aba.bank_name,
           'routing_number': fa.aba.routing_number,
         })
@@ -1225,11 +1225,11 @@ class Invoice(StripeModel[stripe.Invoice]):
     for tax in (stripe_obj.total_taxes or []):
       data['tax'] += Decimal(tax.amount / 100)
 
-    if (payment_intent := stripe_obj.get('payment_intent')) is not None:
+    if (payment_intent := getattr(stripe_obj, 'payment_intent', None)) is not None:  # noqa: E501
       PaymentIntent.from_stripe(payment_intent)
       data['payment_intent_id'] = payment_intent.id
 
-    if (payment_method := stripe_obj.get('payment_method')) is not None:
+    if (payment_method := getattr(stripe_obj, 'payment_method', None)) is not None:  # noqa: E501
       if payment_method.type == 'card':
         PaymentMethod.from_stripe(payment_method)
       elif payment_method.type == 'customer_balance':
@@ -1438,7 +1438,7 @@ class Charge(StripeModel[stripe.Charge]):
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Charge) -> Deserialized:
     data, related_objs = super().deserialize(stripe_obj)
-    if (balance_txn := stripe_obj.get('balance_transaction')) is not None:
+    if (balance_txn := getattr(stripe_obj, 'balance_transaction', None)) is not None:  # noqa: E501
       BalanceTransaction.from_stripe(balance_txn)
       data['balance_transaction_id'] = balance_txn.id
     return data, related_objs
@@ -1516,7 +1516,7 @@ class Refund(StripeModel[stripe.Refund]):
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Refund) -> Deserialized:
     data, related_objs = super().deserialize(stripe_obj)
-    if (balance_txn := stripe_obj.get('balance_transaction')) is not None:
+    if (balance_txn := getattr(stripe_obj, 'balance_transaction', None)) is not None:  # noqa: E501
       BalanceTransaction.from_stripe(balance_txn)
       data['balance_transaction_id'] = balance_txn.id
     return data, related_objs
