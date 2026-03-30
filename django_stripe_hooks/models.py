@@ -454,9 +454,9 @@ class Coupon(StripeModel[stripe.Coupon]):
   def deserialize(cls, stripe_obj: stripe.Coupon) -> Deserialized:
     data, related_objs = super().deserialize(stripe_obj)
     if (applies_to := getattr(stripe_obj, 'applies_to', None)) is not None:
-      assert has_manager(Product)
-      related_objs['products'] = Product.objects.filter(
-        id__in=applies_to.products,
+      related_objs['products'] = cls.stripe_clean(
+        field=Coupon._meta.get_field('products'),
+        value=applies_to.products,
       )
     return data, related_objs
 
