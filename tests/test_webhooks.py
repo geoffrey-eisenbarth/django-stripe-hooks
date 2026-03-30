@@ -69,24 +69,6 @@ class TestStripeWebhooks:
       f'Timed out waiting for create on {model_class.__name__} with {kwargs=}'
     )
 
-  def wait_for_delete(
-    self,
-    model_class: type[T],
-    timeout: int = 10,
-    **kwargs: Any,
-  ) -> None:
-    """Generic polling logic to detect object existence."""
-    assert stripe_models.has_manager(model_class)
-    retries = timeout * 2
-    while retries > 0:
-      if not model_class.objects.filter(**kwargs).exists():
-        return
-      time.sleep(0.5)
-      retries -= 1
-    pytest.fail(
-      f'Timed out waiting for delete on {model_class.__name__} with {kwargs=}'
-    )
-
   def test_create(self, live_server: LiveServer) -> None:
     """Integration testing for Product and Billing primatives."""
 
@@ -221,21 +203,23 @@ class TestStripeWebhooks:
       'email': 'delete@customer.com',
     })
 
-    d_product = self.wait_for_object(stripe_models.Product, id=s_product.id)
-    d_coupon = self.wait_for_object(stripe_models.Coupon, id=s_coupon.id)
-    d_customer = self.wait_for_object(stripe_models.Customer, id=s_customer.id)
-
     self.stripe_client.v1.products.delete(s_product.id)
     self.stripe_client.v1.coupons.delete(s_coupon.id)
     self.stripe_client.v1.customers.delete(s_customer.id)
 
-    self.wait_for_delete(stripe_models.Product, id=s_product.id)
-    self.wait_for_delete(stripe_models.Coupon, id=s_coupon.id)
-    self.wait_for_delete(stripe_models.Customer, id=s_customer.id)
-
-    with pytest.raises(stripe_models.Product.DoesNotExist):
-      d_product.refresh_from_db()
-    with pytest.raises(stripe_models.Coupon.DoesNotExist):
-      d_coupon.refresh_from_db()
-    with pytest.raises(stripe_models.Customer.DoesNotExist):
-      d_customer.refresh_from_db()
+    # Assert soft deletes
+    self.wait_for_object(
+      stripe_models.Product,
+      id=s_product.id,
+      active=False,
+    )
+    self.wait_for_object(
+      stripe_models.Coupon,
+      id=s_coupon.id,
+      valid=False,
+    )
+    self.wait_for_object(
+      stripe_models.Customer,
+      id=s_customer.id,
+      deleted=True,
+    )

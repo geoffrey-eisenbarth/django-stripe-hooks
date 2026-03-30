@@ -580,6 +580,10 @@ class Customer(StripeModel[stripe.Customer]):
     blank=True,
     verbose_name=_("Phone number"),
   )
+  deleted = models.BooleanField(
+    default=False,
+    verbose_name=_("Deleted?"),
+  )
 
 
 class PaymentMethod(StripeModel[stripe.PaymentMethod]):

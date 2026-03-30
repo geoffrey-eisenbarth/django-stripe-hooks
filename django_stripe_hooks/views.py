@@ -84,19 +84,15 @@ class StripeWebhooks(View):
         status=500,
       )
     else:
-      if (
-        self.event.type.endswith('deleted')
-        and hasattr(self.stripe_service, 'delete')
-      ):
-        self.django_obj = DjangoModel.objects.get(
-          id=self.event.data.object['id']
-        )
-        self.django_obj.delete()
-      else:
+      try:
         self.stripe_obj = self.stripe_service.retrieve(
           self.event.data.object['id'],  # mypy prefers key access
           params=self.get_stripe_service_params()
         )
+      except stripe.error.InvalidRequestError:
+        # Stripe object soft deleted, use event data
+        self.django_obj = DjangoModel.from_stripe(self.event.data.object)
+      else:
         self.django_obj = DjangoModel.from_stripe(self.stripe_obj)
 
       response = HttpResponse(
