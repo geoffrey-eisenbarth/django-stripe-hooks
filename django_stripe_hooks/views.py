@@ -53,7 +53,9 @@ class StripeWebhooks(View):
     expands = {
       'coupon': ['applies_to'],
       'promotion_code': ['promotion.coupon'],
+      'invoice': ['payment_intent'],
       'charge': ['balance_transaction'],
+      'refund': ['balance_transaction'],
     }
     if expand := expands.get(stripe_name):
       params['expand'] = expand

@@ -126,6 +126,14 @@ class TestStripeWebhooks:
       'collection_method': 'charge_automatically',
       'payment_behavior': 'default_incomplete',
     })
+    s_fi = self.stripe_client.v1.customers.funding_instructions.create(
+      s_customer.id,
+      params={
+        'funding_type': 'bank_transfer',
+        'bank_transfer': {'type': 'us_bank_transfer'},
+        'currency': 'usd',
+      },
+    )
 
     d_customer = self.wait_for_object(
       stripe_models.Customer,
@@ -135,18 +143,15 @@ class TestStripeWebhooks:
       stripe_models.PaymentMethod,
       id=s_payment_method.id
     )
-    d_subscription = self.wait_for_object(
-      stripe_models.Subscription,
-      id=s_subscription.id,
-    )
     d_payment_intent = self.wait_for_object(
       stripe_models.PaymentIntent,
       customer_id=s_customer.id,
       payment_method_id=s_payment_method.id,
     )
+    d_fi = stripe_models.FundingInstructions.from_stripe(d_customer, s_fi)
 
-    # Confirm PaymentIntent and verify Invoice status updated
-    self.stripe_client.v1.payment_intents.confirm(
+    # Confirm PaymentIntent, verify Invoice and Subscription updated
+    s_payment_intent = self.stripe_client.v1.payment_intents.confirm(
       d_payment_intent.id,
     )
     self.wait_for_object(
@@ -155,6 +160,22 @@ class TestStripeWebhooks:
       customer_id=s_customer.id,
       subscription_id=s_subscription.id,
       status='paid',
+    )
+    d_subscription = self.wait_for_object(
+      stripe_models.Subscription,
+      id=s_subscription.id,
+      status='active',
+    )
+
+    # Refund the charge
+    s_refund = self.stripe_client.v1.refunds.create(params={
+      'amount': s_payment_intent.amount,
+      'payment_intent': s_payment_intent.id,
+      'reason': 'requested_by_customer',
+    })
+    self.wait_for_object(
+      stripe_models.Refund,
+      id=s_refund.id,
     )
 
     # Test ForeignKey relations
@@ -171,18 +192,5 @@ class TestStripeWebhooks:
     # Test currency unit conversion
     assert d_price.unit_amount == Decimal(20.00)
 
-    # Confirm Subscription was updated as active
-    d_subscription.refresh_from_db()
-    assert d_subscription.status == 'active'
-
     # Test FundingInstructions
-    s_fi = self.stripe_client.v1.customers.funding_instructions.create(
-      s_customer.id,
-      params={
-        'funding_type': 'bank_transfer',
-        'bank_transfer': {'type': 'us_bank_transfer'},
-        'currency': 'usd',
-      },
-    )
-    d_fi = stripe_models.FundingInstructions.from_stripe(d_customer, s_fi)
     assert d_fi.customer.id == s_customer.id

@@ -505,14 +505,9 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
     verbose_name=_("Coupon"),
   )
 
-  @property
-  def redemptions(self) -> str:
-    count = f'{self.times_redeemed:,d}'
-    if self.max_redemptions:
-      maximum = f'{self.max_redemptions:,d}'
-    else:
-      maximum = '&infin;'
-    return mark_safe(f"{count} of {maximum}")
+  class Meta(StripeModel.Meta):
+    verbose_name = _("Promotion Code")
+    verbose_name_plural = _("Promotion Codes")
 
   @classmethod
   def deserialize(cls, stripe_obj: stripe.PromotionCode) -> Deserialized:
@@ -522,9 +517,14 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
         data['coupon_id'] = getattr(stripe_coupon, 'id', stripe_coupon)
     return data, related_objs
 
-  class Meta(StripeModel.Meta):
-    verbose_name = _("Promotion Code")
-    verbose_name_plural = _("Promotion Codes")
+  @property
+  def redemptions(self) -> str:
+    count = f'{self.times_redeemed:,d}'
+    if self.max_redemptions:
+      maximum = f'{self.max_redemptions:,d}'
+    else:
+      maximum = '&infin;'
+    return mark_safe(f"{count} of {maximum}")
 
   def save(self, *args: Any, **kwargs: Any) -> None:
     """Extra logic to determine if a promotion code should be deactivated.
@@ -651,15 +651,6 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
     verbose_name_plural = _("Payment Methods")
     ordering = ['-card_exp_year', '-card_exp_month']
 
-  @property
-  def card_info(self) -> str:
-    s = "{brand} {bullets} {bullets} {bullets} {last4}".format(
-      brand=dict(self.CARD_BRANDS)[self.card_brand],
-      bullets='\u2022' * 4,
-      last4=self.card_last4,
-    )
-    return s
-
   @classmethod
   def deserialize(cls, stripe_obj: stripe.PaymentMethod) -> Deserialized:
     data, related_objs = super().deserialize(stripe_obj)
@@ -677,6 +668,15 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
         'card_exp_year': card.exp_year,
       })
     return data, related_objs
+
+  @property
+  def card_info(self) -> str:
+    s = "{brand} {bullets} {bullets} {bullets} {last4}".format(
+      brand=dict(self.CARD_BRANDS)[self.card_brand],
+      bullets='\u2022' * 4,
+      last4=self.card_last4,
+    )
+    return s
 
 
 class PaymentIntent(StripeModel[stripe.PaymentIntent]):
@@ -1208,17 +1208,6 @@ class Invoice(StripeModel[stripe.Invoice]):
     verbose_name_plural = _("Invoices")
     get_latest_by = 'period_start'
 
-  @cached_property
-  def has_prorations(self) -> bool:
-    if self.lines:
-      has_prorations = any(
-        line.get('proration', False)
-        for line in self.lines
-      )
-    else:
-      has_prorations = False
-    return has_prorations
-
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Invoice) -> Deserialized:
     data, related_objs = super().deserialize(stripe_obj)
@@ -1235,7 +1224,32 @@ class Invoice(StripeModel[stripe.Invoice]):
     for tax in (stripe_obj.total_taxes or []):
       data['tax'] += Decimal(tax.amount / 100)
 
+    if (payment_intent := stripe_obj.get('payment_intent')) is not None:
+      PaymentIntent.from_stripe(payment_intent)
+      data['payment_intent_id'] = payment_intent.id
+
+    if (payment_method := stripe_obj.get('payment_method')) is not None:
+      if payment_method.type == 'card':
+        PaymentMethod.from_stripe(payment_method)
+      elif payment_method.type == 'customer_balance':
+        pass
+      else:
+        raise NotImplementedError(
+          f"Unsupported PaymentMethod type: {payment_method.type}"
+        )
+
     return data, related_objs
+
+  @cached_property
+  def has_prorations(self) -> bool:
+    if self.lines:
+      has_prorations = any(
+        line.get('proration', False)
+        for line in self.lines
+      )
+    else:
+      has_prorations = False
+    return has_prorations
 
 
 class BalanceTransaction(StripeModel[stripe.BalanceTransaction]):
@@ -1414,6 +1428,12 @@ class Charge(StripeModel[stripe.Charge]):
     verbose_name=_("Receipt email"),
   )
 
+  class Meta(StripeModel.Meta):
+    verbose_name = _("Charge")
+    verbose_name_plural = _("Charges")
+    ordering = ['-created']
+    get_latest_by = 'created'
+
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Charge) -> Deserialized:
     data, related_objs = super().deserialize(stripe_obj)
@@ -1421,12 +1441,6 @@ class Charge(StripeModel[stripe.Charge]):
       BalanceTransaction.from_stripe(balance_txn)
       data['balance_transaction_id'] = balance_txn.id
     return data, related_objs
-
-  class Meta(StripeModel.Meta):
-    verbose_name = _("Charge")
-    verbose_name_plural = _("Charges")
-    ordering = ['-created']
-    get_latest_by = 'created'
 
 
 class Refund(StripeModel[stripe.Refund]):
@@ -1497,3 +1511,11 @@ class Refund(StripeModel[stripe.Refund]):
   class Meta(StripeModel.Meta):
     verbose_name = _("Refund")
     verbose_name_plural = _("Refunds")
+
+  @classmethod
+  def deserialize(cls, stripe_obj: stripe.Refund) -> Deserialized:
+    data, related_objs = super().deserialize(stripe_obj)
+    if (balance_txn := stripe_obj.get('balance_transaction')) is not None:
+      BalanceTransaction.from_stripe(balance_txn)
+      data['balance_transaction_id'] = balance_txn.id
+    return data, related_objs
