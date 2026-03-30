@@ -18,7 +18,7 @@ from pytest_django.live_server_helper import LiveServer
 T = TypeVar('T', bound=models.Model)
 
 
-@pytest.mark.django_db(transactional=True)
+@pytest.mark.django_db()
 class TestStripeWebhooks:
 
   @pytest.fixture(autouse=True)
