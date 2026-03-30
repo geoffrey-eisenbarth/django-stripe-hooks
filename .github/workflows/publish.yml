@@ -67,7 +67,6 @@ jobs:
           # Map GitHub Secrets to Environment Variables
           STRIPE_PUBLIC_KEY: ${{ secrets.STRIPE_PUBLIC_KEY }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
-          STRIPE_WEBHOOK_SECRET_KEY: ${{ secrets.STRIPE_WEBHOOK_SECRET_KEY }}
           # The Stripe CLI specifically looks for this name:
           STRIPE_API_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
         run: |
