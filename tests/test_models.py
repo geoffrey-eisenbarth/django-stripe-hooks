@@ -44,7 +44,7 @@ class TestSpecializedModels:
         })
       if (billing_details := pm.billing_details) is not None:
         if (address := billing_details.address) is not None:
-          data['zip_code'] = address.postal_code
+          data['zip_code'] = address.postal_code or ''
 
     ConfirmationToken.objects.create(customer=d_customer, **data)
 

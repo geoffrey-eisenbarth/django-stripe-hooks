@@ -37,18 +37,23 @@ class StripeWebhooks(View):
   def stripe_client(self) -> stripe.StripeClient:
     return stripe.StripeClient(settings.STRIPE_SECRET_KEY)
 
-  def resolve_django_model(self, stripe_name: str) -> type[StripeModel[Any]]:
+  @property
+  def stripe_name(self) -> str:
+    return cast(str, self.event.data.object['object'])  # mypy wants key access
+
+  @property
+  def stripe_service(self) -> StripeService:
+    service = getattr(self.stripe_client.v1, f'{self.stripe_name}s')
+    return cast(StripeService, service)
+
+  def resolve_django_model(self) -> type[StripeModel[Any]]:
     django_model_name = ''.join(map(
       lambda s: s.title(),
-      stripe_name.split('_'),
+      self.stripe_name.split('_'),
     ))
     return DJANGO_MODELS[django_model_name]
 
-  def resolve_stripe_service(self, stripe_name: str) -> StripeService:
-    service = getattr(self.stripe_client.v1, f'{stripe_name}s')
-    return cast(StripeService, service)
-
-  def get_stripe_service_params(self, stripe_name: str) -> dict[str, Any]:
+  def get_stripe_service_params(self) -> dict[str, Any]:
     params = {}
     expands = {
       'coupon': ['applies_to'],
@@ -57,7 +62,7 @@ class StripeWebhooks(View):
       'charge': ['balance_transaction'],
       'refund': ['balance_transaction'],
     }
-    if expand := expands.get(stripe_name):
+    if expand := expands.get(self.stripe_name):
       params['expand'] = expand
     return params
 
@@ -71,8 +76,7 @@ class StripeWebhooks(View):
 
     try:
       # Resolve the related Django Model
-      stripe_name = self.event.data.object['object']  # mypy prefers key access
-      DjangoModel = self.resolve_django_model(stripe_name)
+      DjangoModel = self.resolve_django_model()
     except KeyError as e:
       django_model_name = e.args[0]
       response = HttpResponse(
@@ -80,17 +84,26 @@ class StripeWebhooks(View):
         status=500,
       )
     else:
-      # Refresh from Stripe and create/update locally
-      stripe_service = self.resolve_stripe_service(stripe_name)
-      self.stripe_obj = stripe_service.retrieve(
-        self.event.data.object['id'],  # mypy prefers key access
-        params=self.get_stripe_service_params(stripe_name),
-      )
-      self.django_obj = DjangoModel.from_stripe(self.stripe_obj)
+      if (
+        self.event.type.endswith('deleted')
+        and hasattr(self.stripe_service, 'delete')
+      ):
+        self.django_obj = DjangoModel.objects.get(
+          id=self.event.data.object['id']
+        )
+        self.django_obj.delete()
+      else:
+        self.stripe_obj = self.stripe_service.retrieve(
+          self.event.data.object['id'],  # mypy prefers key access
+          params=self.get_stripe_service_params()
+        )
+        self.django_obj = DjangoModel.from_stripe(self.stripe_obj)
+
       response = HttpResponse(
         "[django-stripe-hooks] Success!",
         status=200,
       )
+
     finally:
       # Allow authors to hook in
       author_hook = self.event.type.replace('.', '_')

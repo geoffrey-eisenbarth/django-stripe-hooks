@@ -1,7 +1,7 @@
 import datetime as dt
 from decimal import Decimal
 from typing import (
-  Type, TypeVar, Generic, TypeGuard, Protocol,
+  TypeVar, Generic, TypeGuard, Protocol,
   Any, Self, Tuple, Iterable,
   runtime_checkable, cast,
 )
@@ -16,7 +16,7 @@ from django.utils.safestring import mark_safe
 from django.utils.translation import gettext_lazy as _
 
 
-T = TypeVar("T", bound=stripe.StripeObject)
+T = TypeVar('T', bound=stripe.StripeObject)
 Deserialized = Tuple[dict[str, Any], dict[str, Iterable[models.Model]]]
 
 
@@ -25,8 +25,8 @@ class ManagedModel(Protocol):
   objects: models.Manager[models.Model]
 
 
-def has_manager(val: Any) -> TypeGuard[Type[ManagedModel]]:
-  return isinstance(val, type) and hasattr(val, "objects")
+def has_manager(val: Any) -> TypeGuard[type[ManagedModel]]:
+  return isinstance(val, type) and hasattr(val, 'objects')
 
 
 CURRENCIES = (
@@ -102,7 +102,8 @@ class StripeModel(models.Model, Generic[T]):
     for field in cls._meta.get_fields():
       if field.name in stripe_obj:
 
-        value = cls.stripe_clean(field, getattr(stripe_obj, field.name))
+        # Key access avoids method name collisions (items() vs ['items'])
+        value = cls.stripe_clean(field, stripe_obj[field.name])
 
         if isinstance(field, (models.ManyToOneRel, models.ManyToManyField)):
           related_objs[field.name] = value
@@ -778,7 +779,6 @@ class PaymentIntent(StripeModel[stripe.PaymentIntent]):
     verbose_name_plural = _("Payment Intents")
 
 
-# TODO: delete?
 class ConfirmationToken(models.Model):
   """Django implementation of Stripe Confirmation Tokens.
 
@@ -1022,9 +1022,9 @@ class Subscription(StripeModel[stripe.Subscription]):
     data, related_objs = super().deserialize(stripe_obj)
 
     # Add PromotionCode
-    stripe_discount = getattr(stripe_obj, "discount", None)
-    stripe_invoice = getattr(stripe_obj, "latest_invoice", None)
-    if d := (stripe_discount or getattr(stripe_invoice, "discount", None)):
+    stripe_discount = getattr(stripe_obj, 'discount', None)
+    stripe_invoice = getattr(stripe_obj, 'latest_invoice', None)
+    if d := (stripe_discount or getattr(stripe_invoice, 'discount', None)):
       data['promotion_code_id'] = d.promotion_code
 
     return data, related_objs

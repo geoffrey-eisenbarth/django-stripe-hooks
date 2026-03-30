@@ -1,5 +1,3 @@
-- Delete events:
-  - customer_deleted
 - squash migrations, un-reinstall to tpg
 
 - README:

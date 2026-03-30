@@ -1,6 +1,6 @@
 from decimal import Decimal
 import time
-from typing import Type, TypeVar, Any, Generator, cast
+from typing import TypeVar, Any, Generator, cast
 
 import stripe
 import pytest
@@ -53,7 +53,7 @@ class TestStripeWebhooks:
 
   def wait_for_object(
     self,
-    model_class: Type[T],
+    model_class: type[T],
     timeout: int = 10,
     **kwargs: Any,
   ) -> T:
@@ -66,7 +66,25 @@ class TestStripeWebhooks:
       time.sleep(0.5)
       retries -= 1
     pytest.fail(
-      f'Timed out waiting for {model_class.__name__} with {kwargs=}'
+      f'Timed out waiting for create on {model_class.__name__} with {kwargs=}'
+    )
+
+  def wait_for_delete(
+    self,
+    model_class: type[T],
+    timeout: int = 10,
+    **kwargs: Any,
+  ) -> None:
+    """Generic polling logic to detect object existence."""
+    assert stripe_models.has_manager(model_class)
+    retries = timeout * 2
+    while retries > 0:
+      if not model_class.objects.filter(**kwargs).exists():
+        return
+      time.sleep(0.5)
+      retries -= 1
+    pytest.fail(
+      f'Timed out waiting for delete on {model_class.__name__} with {kwargs=}'
     )
 
   def test_products_and_billing(self, live_server: LiveServer) -> None:
@@ -88,7 +106,7 @@ class TestStripeWebhooks:
       'metadata': {'category': 'Test Price'},
     })
     s_coupon = self.stripe_client.v1.coupons.create(params={
-      'name': 'Test Coupon {time.time()}',
+      'name': f'Test Coupon {time.time()}',
       'percent_off': 20,
       'duration': 'once',
       'applies_to': {'products': [s_product.id]},
@@ -179,7 +197,45 @@ class TestStripeWebhooks:
     assert d_coupon.products.exists()
 
     # Test ReverseForeignKey relations
+    d_subscription.refresh_from_db()
     assert d_subscription.items.exists()
 
     # Test currency unit conversion
     assert d_price.unit_amount == Decimal(20.00)
+
+  def test_delete(self, live_server: LiveServer) -> None:
+    s_product = self.stripe_client.v1.products.create(params={
+      'name': f'Delete Product {time.time()}',
+      'description': 'Description for delete product',
+      'statement_descriptor': 'STATEMENT',
+      'metadata': {'category': 'Delete Product'},
+    })
+    s_coupon = self.stripe_client.v1.coupons.create(params={
+      'name': f'Test Coupon {time.time()}',
+      'percent_off': 20,
+      'duration': 'once',
+      'applies_to': {'products': [s_product.id]},
+    })
+    s_customer = self.stripe_client.v1.customers.create(params={
+      'name': 'Delete Customer',
+      'email': 'delete@customer.com',
+    })
+
+    d_product = self.wait_for_object(stripe_models.Product, id=s_product.id)
+    d_coupon = self.wait_for_object(stripe_models.Coupon, id=s_coupon.id)
+    d_customer = self.wait_for_object(stripe_models.Customer, id=s_customer.id)
+
+    self.stripe_client.v1.products.delete(s_product.id)
+    self.stripe_client.v1.coupons.delete(s_coupon.id)
+    self.stripe_client.v1.customers.delete(s_customer.id)
+
+    self.wait_for_delete(stripe_models.Product, id=s_product.id)
+    self.wait_for_delete(stripe_models.Coupon, id=s_coupon.id)
+    self.wait_for_delete(stripe_models.Customer, id=s_customer.id)
+
+    with pytest.raises(stripe_models.Product.DoesNotExist):
+      d_product.refresh_from_db()
+    with pytest.raises(stripe_models.Coupon.DoesNotExist):
+      d_coupon.refresh_from_db()
+    with pytest.raises(stripe_models.Customer.DoesNotExist):
+      d_customer.refresh_from_db()
