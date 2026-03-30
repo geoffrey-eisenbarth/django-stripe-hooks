@@ -2,10 +2,9 @@ import os
 import re
 import subprocess
 import time
-from typing import Any, Generator
+from typing import Generator
 
 import pytest
-from _pytest.config import Config
 
 from django.conf import settings
 
@@ -14,13 +13,14 @@ WEBHOOK_URL = 'localhost:8888/stripe/webhooks/'
 STRIPE_LOG = 'tests/stripe_cli.log'
 STRIPE_VERSION = '2026-02-25.clover'  # c.f. Python SDK >= 14.4 < 15.0
 
-
-def pytest_configure(config: Config) -> None:
-  # Ensure the OPTIONS dictionary exists
-  if 'OPTIONS' not in settings.DATABASES['default']:
-    settings.DATABASES['default']['OPTIONS'] = {}
-  # Disable the thread-sharing check for SQLite
-  settings.DATABASES['default']['OPTIONS']['check_same_thread'] = False  # type: ignore  # noqa: E501
+# from typing import Any
+# from _pytest.config import Config
+# def pytest_configure(config: Config) -> None:
+#   # Ensure the OPTIONS dictionary exists
+#   if 'OPTIONS' not in settings.DATABASES['default']:
+#     settings.DATABASES['default']['OPTIONS'] = {}
+#   # Disable the thread-sharing check for SQLite
+#   settings.DATABASES['default']['OPTIONS']['check_same_thread'] = False  # type: ignore  # noqa: E501
 
 
 @pytest.fixture(scope='session', autouse=True)
@@ -31,14 +31,14 @@ def check_stripe_installed() -> None:
     pytest.exit('Stripe CLI is not installed.')
 
 
-@pytest.fixture(scope='session')
-def django_db_modify_db_settings(django_db_blocker: Any) -> None:
-    """
-    Second layer of defense: ensure the blocker doesn't interfere
-    with the connection during the session.
-    """
-    with django_db_blocker.unblock():
-      settings.DATABASES['default']['OPTIONS']['check_same_thread'] = False  # type: ignore  # noqa: E501
+# @pytest.fixture(scope='session')
+# def django_db_modify_db_settings(django_db_blocker: Any) -> None:
+#     """
+#     Second layer of defense: ensure the blocker doesn't interfere
+#     with the connection during the session.
+#     """
+#     with django_db_blocker.unblock():
+#       settings.DATABASES['default']['OPTIONS']['check_same_thread'] = False  # type: ignore  # noqa: E501
 
 
 @pytest.fixture(scope='session', autouse=True)
