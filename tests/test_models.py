@@ -11,7 +11,7 @@ from django_stripe_hooks.models import (
 )
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transactional=True)
 class TestSpecializedModels:
 
   @pytest.fixture(autouse=True)
