@@ -52,7 +52,7 @@ Configure them in your `settings.py`:
 # Required settings
 STRIPE_PUBLIC_KEY = "pk_test_..."
 STRIPE_SECRET_KEY = "sk_test_..."
-STRIPE_WEBHOOK_SECRET = "whsec_..."
+STRIPE_WEBHOOK_SECRET_KEY = "whsec_..."
 ```
 
 Important: Store your API credentials securely.

@@ -89,8 +89,15 @@ class StripeWebhooks(View):
           self.event.data.object['id'],  # mypy prefers key access
           params=self.get_stripe_service_params()
         )
-      except stripe.error.InvalidRequestError:
-        # Stripe object soft deleted, use event data
+      except stripe.error.InvalidRequestError as e:
+        is_404 = getattr(e, "http_status", None) == 404
+        is_missing = getattr(e, "code", None) == 'resource_missing'
+        if is_404 or is_missing:
+          # Stripe object soft deleted, use event data
+          self.django_obj = DjangoModel.from_stripe(self.event.data.object)
+        else:
+          raise e
+
         self.django_obj = DjangoModel.from_stripe(self.event.data.object)
       else:
         self.django_obj = DjangoModel.from_stripe(self.stripe_obj)
