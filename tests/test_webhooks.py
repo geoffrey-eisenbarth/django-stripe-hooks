@@ -1,6 +1,9 @@
 from decimal import Decimal
 import time
-from typing import TypeVar, Any, Generator, cast
+from typing import (
+  TypeVar, Protocol,
+  Any, Generator, ContextManager, cast
+)
 
 import stripe
 import pytest
@@ -18,7 +21,12 @@ from pytest_django.live_server_helper import LiveServer
 T = TypeVar('T', bound=models.Model)
 
 
-@pytest.mark.django_db()
+class DbBlocker(Protocol):
+  def unblock(self) -> ContextManager[None]:
+    ...
+
+
+@pytest.mark.django_db(transaction=True)
 class TestStripeWebhooks:
 
   @pytest.fixture(autouse=True)
@@ -35,7 +43,7 @@ class TestStripeWebhooks:
       **kwargs: Any,
     ) -> None:
       # Capture the actual exception object for the error message
-      exceptions.append(kwargs.get('exception'))
+      exceptions.append(kwargs.get('exception') or kwargs.get('exc_info'))
 
     # Connect the signal before the test starts
     got_request_exception.connect(signal_handler)
@@ -50,6 +58,14 @@ class TestStripeWebhooks:
       pytest.fail(
         f'Server-side exception during webhook processing: {exceptions[0]}'
       )
+
+  @pytest.fixture(autouse=True)
+  def unblock_db(
+    self,
+    django_db_blocker: DbBlocker,
+  ) -> Generator[None, None, None]:
+    with django_db_blocker.unblock():
+      yield
 
   def wait_for_object(
     self,
