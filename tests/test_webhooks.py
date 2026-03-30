@@ -87,7 +87,7 @@ class TestStripeWebhooks:
       f'Timed out waiting for delete on {model_class.__name__} with {kwargs=}'
     )
 
-  def test_products_and_billing(self, live_server: LiveServer) -> None:
+  def test_create(self, live_server: LiveServer) -> None:
     """Integration testing for Product and Billing primatives."""
 
     # Product primatives
