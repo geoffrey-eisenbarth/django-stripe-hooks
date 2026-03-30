@@ -1,3 +1,4 @@
+import time
 from typing import Any, Protocol, cast, runtime_checkable
 
 import stripe
@@ -66,6 +67,30 @@ class StripeWebhooks(View):
       params['expand'] = expand
     return params
 
+  def retrieve_stripe_obj(self) -> stripe.StripeObject:
+    for attempt in range(5):
+      try:
+        stripe_obj = self.stripe_service.retrieve(
+          self.event.data.object['id'],  # mypy prefers key access
+          params=self.get_stripe_service_params()
+        )
+        break
+      except stripe.error.RateLimitError:
+        time.sleep(0.5 * (attempt + 1))
+      except stripe.error.InvalidRequestError as e:
+        is_404 = getattr(e, "http_status", None) == 404
+        is_missing = getattr(e, "code", None) == 'resource_missing'
+        if is_404 or is_missing:
+          # Stripe object soft deleted, use event data
+          stripe_obj = self.event.data.object
+          break
+        else:
+          raise e
+    else:
+      # If still failing, fallback to event data
+      stripe_obj = self.event.data.object
+    return cast(stripe.StripeObject, stripe_obj)
+
   def post(self, request: HttpRequest) -> HttpResponse:
     # Construct the event
     self.event = self.stripe_client.construct_event(
@@ -84,24 +109,8 @@ class StripeWebhooks(View):
         status=500,
       )
     else:
-      try:
-        self.stripe_obj = self.stripe_service.retrieve(
-          self.event.data.object['id'],  # mypy prefers key access
-          params=self.get_stripe_service_params()
-        )
-      except stripe.error.InvalidRequestError as e:
-        is_404 = getattr(e, "http_status", None) == 404
-        is_missing = getattr(e, "code", None) == 'resource_missing'
-        if is_404 or is_missing:
-          # Stripe object soft deleted, use event data
-          self.django_obj = DjangoModel.from_stripe(self.event.data.object)
-        else:
-          raise e
-
-        self.django_obj = DjangoModel.from_stripe(self.event.data.object)
-      else:
-        self.django_obj = DjangoModel.from_stripe(self.stripe_obj)
-
+      self.stripe_obj = self.retrieve_stripe_obj()
+      self.django_obj = DjangoModel.from_stripe(self.stripe_obj)
       response = HttpResponse(
         "[django-stripe-hooks] Success!",
         status=200,

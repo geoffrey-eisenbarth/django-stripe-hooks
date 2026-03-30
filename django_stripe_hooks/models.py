@@ -567,7 +567,7 @@ class Customer(StripeModel[stripe.Customer]):
   """
 
   email = models.EmailField(
-    unique=True,
+    db_index=True,
     verbose_name=_("Email address"),
   )
   name = models.CharField(
