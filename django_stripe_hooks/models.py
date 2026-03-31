@@ -146,16 +146,19 @@ class StripeModel(models.Model, Generic[T]):
     except IntegrityError as outer_e:
       # Raise a specific DoesNotExist exception
       for field in cls._meta.get_fields():
-        if (field.one_to_one or field.many_to_one):
-          RelatedModel = cls._meta.get_field(field.name).related_model  # type: ignore  # noqa: E501
-          assert has_manager(RelatedModel)
-          assert issubclass(RelatedModel, StripeModel)
-          try:
-            RelatedModel.objects.get(id=data[field.attname])
-          except ObjectDoesNotExist as inner_e:
-            raise ObjectDoesNotExist(
-              f"{RelatedModel.__name__} {data[field.attname]} does not exit."
-            ) from inner_e
+        if not isinstance(field, (models.ForeignKey, models.OneToOneField)):
+          continue
+
+        RelatedModel = field.related_model
+        assert has_manager(RelatedModel)
+        assert issubclass(RelatedModel, StripeModel)
+
+        try:
+          RelatedModel.objects.get(id=data[field.attname])
+        except ObjectDoesNotExist as inner_e:
+          raise ObjectDoesNotExist(
+            f"{RelatedModel.__name__} {data[field.attname]} does not exit."
+          ) from inner_e
       raise IntegrityError(
         f"IntegrityError writing {cls.__name__} with {data=}"
       ) from outer_e
