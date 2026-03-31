@@ -9,7 +9,7 @@ import pytest
 from django.conf import settings
 
 
-WEBHOOK_URL = 'localhost:8888/stripe/webhooks/'
+WEBHOOK_URL = 'localhost:8000/stripe/webhooks/'
 STRIPE_LOG = 'tests/stripe_cli.log'
 STRIPE_VERSION = '2026-02-25.clover'  # c.f. Python SDK >= 14.4 < 15.0
 

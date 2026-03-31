@@ -53,4 +53,6 @@ def fetch(service: StripeService, id: str) -> stripe.StripeObject | None:
     else:
       return stripe_obj
 
-  return None
+  raise stripe.error.RateLimitError(
+    "Exceeded maximum retries while fetching Stripe object."
+  )

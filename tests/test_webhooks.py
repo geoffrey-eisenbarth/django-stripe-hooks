@@ -261,3 +261,8 @@ class TestWebhooks:
       id=s_customer.id,
       deleted=True,
     )
+    self.wait_for_object(
+      stripe_models.Subscription,
+      id=s_subscription.id,
+      status='canceled',
+    )

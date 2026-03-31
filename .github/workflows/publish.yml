@@ -39,29 +39,6 @@ jobs:
       - name: Check types with mypy
         run: poetry run mypy
 
-      - name: Start Stripe CLI and Capture Secret
-        env:
-          STRIPE_API_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
-        run: |
-          # Start listening in background and pipe output to a file
-          stripe listen --forward-to localhost:8000/stripe/webhooks/ > stripe_log.txt 2>&1 &
-
-          # Wait a few seconds for the CLI to connect and print the secret
-          sleep 5
-
-          # Extract the webhook signing secret from the log file
-          # It looks like: "Your webhook signing secret is whsec_..."
-          WH_SECRET=$(grep -o 'whsec_[^ ]*' stripe_log.txt | head -1)
-
-          if [ -z "$WH_SECRET" ]; then
-            echo "Error: Could not capture Stripe Webhook Secret"
-            cat stripe_log.txt
-            exit 1
-          fi
-
-          echo "STRIPE_WEBHOOK_SECRET_KEY=$WH_SECRET" >> $GITHUB_ENV
-          echo "Successfully captured dynamic webhook secret."
-
       - name: Run tests
         env:
           # Map GitHub Secrets to Environment Variables
