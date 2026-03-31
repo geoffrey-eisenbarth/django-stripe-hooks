@@ -30,15 +30,24 @@ class StripeManager(models.Manager[T]):
 
     try:
       with transaction.atomic():
-        data, related_objs = self.model.deserialize(stripe_obj)
+        data, post_save, pre_save = self.model.deserialize(stripe_obj)
         if not data:
           raise ValueError(f"Deserialized data is empty, got {stripe_obj=}")
+
+        # Resolve expanded FK dependencies before saving the parent.
+        # Each related object is upserted (via its own from_stripe) so the
+        # parent's FK column has a valid ID to reference.
+        for field_name, fk_stripe_obj in pre_save.items():
+          field = self.model._meta.get_field(field_name)
+          if is_stripe_model(field.related_model):
+            data[field_name] = field.related_model.objects.from_stripe(fk_stripe_obj)  # noqa: E501
+
         django_obj, created = self.update_or_create(
           id=data.pop('id'),
           defaults=data,
         )
 
-        for field_name, objs in related_objs.items():
+        for field_name, objs in post_save.items():
           field = self.model._meta.get_field(field_name)
           if isinstance(field, models.ManyToManyField):
             getattr(django_obj, field_name).set(objs)

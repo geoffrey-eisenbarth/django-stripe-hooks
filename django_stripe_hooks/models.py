@@ -20,7 +20,8 @@ from django_stripe_hooks.managers import StripeManager, is_stripe_model
 T = TypeVar('T', bound=stripe.StripeObject)
 Deserialized = Tuple[
   dict[str, Any],
-  dict[str, Iterable['StripeModel[stripe.StripeObject]']]
+  dict[str, Iterable['StripeModel[stripe.StripeObject]']],
+  dict[str, stripe.StripeObject],
 ]
 
 
@@ -76,9 +77,7 @@ class StripeModel(models.Model, Generic[T]):
     elif isinstance(field, models.JSONField):
       value = getattr(value, 'data', value) or field.default()
     elif isinstance(field, (models.ForeignKey, models.OneToOneField)):
-      if is_stripe_model(field.related_model):
-        if isinstance(value, stripe.StripeObject):
-          value = field.related_model.objects.from_stripe(value)
+      pass  # string IDs and stripe.StripeObjects are routed in deserialize()
     elif isinstance(field, models.ManyToOneRel):
       # Related objects can't exist yet, so we just instantiate them
       # value = getattr(value, 'data', [])
@@ -101,7 +100,7 @@ class StripeModel(models.Model, Generic[T]):
   def deserialize(cls, stripe_obj: T) -> Deserialized:
     """Convert Stripe object to model field values."""
 
-    data, related_objs = {}, {}
+    data, post_save, pre_save = {}, {}, {}
 
     for field in cls._meta.get_fields():
       if field.name in stripe_obj:
@@ -110,16 +109,19 @@ class StripeModel(models.Model, Generic[T]):
         value = cls.stripe_clean(field, stripe_obj[field.name])
 
         if isinstance(field, (models.ManyToOneRel, models.ManyToManyField)):
-          related_objs[field.name] = value
+          post_save[field.name] = value
         elif isinstance(field, (models.ForeignKey, models.OneToOneField)):
-          if isinstance(value, str):
+          if isinstance(value, stripe.StripeObject):
+            # Expanded FK object — manager will call from_stripe()
+            pre_save[field.name] = value
+          elif isinstance(value, str):
             data[field.attname] = value
           else:
             data[field.name] = value
         else:
           data[field.name] = value
 
-    return data, related_objs
+    return data, post_save, pre_save
 
 
 class Product(StripeModel[stripe.Product]):
@@ -291,14 +293,14 @@ class Price(StripeModel[stripe.Price]):
 
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Price) -> Deserialized:
-    data, related_objs = super().deserialize(stripe_obj)
+    data, post_save, pre_save = super().deserialize(stripe_obj)
     if (recurring := getattr(stripe_obj, 'recurring', None)) is not None:
       data.update({
         'interval': recurring.interval,
         'interval_count': recurring.interval_count,
         'usage_type': recurring.usage_type,
       })
-    return data, related_objs
+    return data, post_save, pre_save
 
 
 class PriceTier(models.Model):
@@ -344,7 +346,7 @@ class PriceTier(models.Model):
 
   @classmethod
   def deserialize(cls, stripe_obj: dict[str, Any]) -> Deserialized:
-    return stripe_obj, {}
+    return stripe_obj, {}, {}
 
 
 class Coupon(StripeModel[stripe.Coupon]):
@@ -435,13 +437,13 @@ class Coupon(StripeModel[stripe.Coupon]):
 
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Coupon) -> Deserialized:
-    data, related_objs = super().deserialize(stripe_obj)
+    data, post_save, pre_save = super().deserialize(stripe_obj)
     if (applies_to := getattr(stripe_obj, 'applies_to', None)) is not None:
-      related_objs['products'] = cls.stripe_clean(
+      post_save['products'] = cls.stripe_clean(
         field=Coupon._meta.get_field('products'),
         value=applies_to.products,
       )
-    return data, related_objs
+    return data, post_save, pre_save
 
 
 class PromotionCode(StripeModel[stripe.PromotionCode]):
@@ -504,16 +506,16 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
 
   @classmethod
   def deserialize(cls, stripe_obj: stripe.PromotionCode) -> Deserialized:
-    data, related_objs = super().deserialize(stripe_obj)
+    data, post_save, pre_save = super().deserialize(stripe_obj)
 
     if stripe_obj.promotion:
       stripe_coupon = stripe_obj.promotion.coupon
       if isinstance(stripe_coupon, stripe.Coupon):
-        data['coupon'] = Coupon.objects.from_stripe(stripe_coupon)
+        pre_save['coupon'] = stripe_coupon
       elif isinstance(stripe_coupon, str):
         data['coupon_id'] = stripe_coupon
 
-    return data, related_objs
+    return data, post_save, pre_save
 
   @property
   def redemptions(self) -> str:
@@ -654,7 +656,7 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
 
   @classmethod
   def deserialize(cls, stripe_obj: stripe.PaymentMethod) -> Deserialized:
-    data, related_objs = super().deserialize(stripe_obj)
+    data, post_save, pre_save = super().deserialize(stripe_obj)
 
     if stripe_obj.billing_details.address is not None:
       data['zip_code'] = stripe_obj.billing_details.address.postal_code or ''
@@ -666,7 +668,7 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
         'card_exp_month': card.exp_month,
         'card_exp_year': card.exp_year,
       })
-    return data, related_objs
+    return data, post_save, pre_save
 
   @property
   def card_info(self) -> str:
@@ -913,7 +915,7 @@ class FundingInstructions(models.Model):
       elif (fa.type == 'swift') and (fa.swift is not None):
         data['swift_code'] = fa.swift.swift_code
 
-    return data, {}
+    return data, {}, {}
 
   # TODO:
   @classmethod
@@ -923,7 +925,7 @@ class FundingInstructions(models.Model):
     stripe_obj: stripe.FundingInstructions,
   ) -> Self:
     """Returns a Django model instance based on Stripe API object."""
-    data, related_objs = FundingInstructions.deserialize(stripe_obj)
+    data, post_save = FundingInstructions.deserialize(stripe_obj)[:2]
     django_obj, created = cls.objects.update_or_create(
       customer=customer,
       defaults=data,
@@ -1015,18 +1017,18 @@ class Subscription(StripeModel[stripe.Subscription]):
 
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Subscription) -> Deserialized:
-    data, related_objs = super().deserialize(stripe_obj)
+    data, post_save, pre_save = super().deserialize(stripe_obj)
 
     stripe_discount = getattr(stripe_obj, 'discount', None)
     stripe_invoice = getattr(stripe_obj, 'latest_invoice', None)
     if d := (stripe_discount or getattr(stripe_invoice, 'discount', None)):
       stripe_promo = d.promotion_code
       if isinstance(stripe_promo, stripe.PromotionCode):
-        data['promotion_code'] = PromotionCode.objects.from_stripe(stripe_promo)  # noqa: E501
+        pre_save['promotion_code'] = stripe_promo
       elif isinstance(stripe_promo, str):
         data['promotion_code_id'] = stripe_promo
 
-    return data, related_objs
+    return data, post_save, pre_save
 
   @cached_property
   def current_period_start(self) -> dt.datetime:
@@ -1216,12 +1218,12 @@ class Invoice(StripeModel[stripe.Invoice]):
 
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Invoice) -> Deserialized:
-    data, related_objs = super().deserialize(stripe_obj)
+    data, post_save, pre_save = super().deserialize(stripe_obj)
 
     if stripe_obj.parent and stripe_obj.parent.subscription_details:
       stripe_sub = stripe_obj.parent.subscription_details.subscription
       if isinstance(stripe_sub, stripe.Subscription):
-        data['subscription'] = Subscription.objects.from_stripe(stripe_sub)
+        pre_save['subscription'] = stripe_sub
       elif isinstance(stripe_sub, str):
         data['subscription_id'] = stripe_sub
 
@@ -1233,7 +1235,7 @@ class Invoice(StripeModel[stripe.Invoice]):
     for tax in (stripe_obj.total_taxes or []):
       data['tax'] += Decimal(tax.amount / 100)
 
-    return data, related_objs
+    return data, post_save, pre_save
 
   @cached_property
   def has_prorations(self) -> bool:
