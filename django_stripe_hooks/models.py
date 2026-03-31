@@ -941,8 +941,11 @@ class Subscription(StripeModel[stripe.Subscription]):
 
   """
 
-  # TODO: missing promotion_code
-  API_EXPAND_FIELDS = ('customer', 'default_payment_method.customer')
+  API_EXPAND_FIELDS = (
+    'customer',
+    'discounts.promotion_code',
+    'default_payment_method.customer',
+  )
 
   STATUSES = (
     ('incomplete', _("Incomplete")),
