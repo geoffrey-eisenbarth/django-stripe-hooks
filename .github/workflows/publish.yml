@@ -49,10 +49,6 @@ jobs:
         run: |
           poetry run pytest --cov --cov-branch --cov-report=xml
 
-      - name: Cleanup Stripe CLI
-        if: always()
-        run: pkill -f stripe || true
-
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
