@@ -8,8 +8,9 @@ from typing import (
 
 import stripe
 
+from django.core.exceptions import ObjectDoesNotExist
 from django.core.validators import RegexValidator
-from django.db import models, transaction
+from django.db import models, transaction, IntegrityError
 from django.utils import timezone
 from django.utils.functional import cached_property
 from django.utils.safestring import mark_safe
@@ -115,32 +116,49 @@ class StripeModel(models.Model, Generic[T]):
     return data, related_objs
 
   # TODO: Move to manager?
+  # TODO: Refactor this, too complicated
   @classmethod
   def from_stripe(cls, stripe_obj: T) -> Self:
     """Updates or creates a Django instance from a Stripe API object."""
 
-    with transaction.atomic():
-      data, related_objs = cls.deserialize(stripe_obj)
+    try:
+      with transaction.atomic():
+        data, related_objs = cls.deserialize(stripe_obj)
 
-      django_obj, created = cls.objects.update_or_create(
-        id=data.pop('id'),
-        defaults=data,
-      )
+        django_obj, created = cls.objects.update_or_create(
+          id=data.pop('id'),
+          defaults=data,
+        )
 
-      for field_name, objs in related_objs.items():
-        field = cls._meta.get_field(field_name)
-        if isinstance(field, models.ManyToManyField):
-          getattr(django_obj, field_name).set(objs)
-        elif isinstance(field, models.ManyToOneRel):
-          RelatedModel = field.related_model
+        for field_name, objs in related_objs.items():
+          field = cls._meta.get_field(field_name)
+          if isinstance(field, models.ManyToManyField):
+            getattr(django_obj, field_name).set(objs)
+          elif isinstance(field, models.ManyToOneRel):
+            RelatedModel = field.related_model
+            assert has_manager(RelatedModel)
+            assert issubclass(RelatedModel, StripeModel)
+            for related_obj in objs:
+              RelatedModel.from_stripe(related_obj)
+            django_obj.refresh_from_db()
+
+      return django_obj
+    except IntegrityError as outer_e:
+      # Raise a specific DoesNotExist exception
+      for field in cls._meta.get_fields():
+        if (field.one_to_one or field.many_to_one):
+          RelatedModel = cls._meta.get_field(field.name).related_model  # type: ignore  # noqa: E501
           assert has_manager(RelatedModel)
           assert issubclass(RelatedModel, StripeModel)
-          for related_obj in objs:
-            RelatedModel.from_stripe(related_obj)
-          django_obj.refresh_from_db()
-
-      django_obj.refresh_from_db()
-      return django_obj
+          try:
+            RelatedModel.objects.get(id=data[field.attname])
+          except ObjectDoesNotExist as inner_e:
+            raise ObjectDoesNotExist(
+              f"{RelatedModel.__name__} {data[field.attname]} does not exit."
+            ) from inner_e
+      raise IntegrityError(
+        f"IntegrityError writing {cls.__name__} with {data=}"
+      ) from outer_e
 
 
 class Product(StripeModel[stripe.Product]):
@@ -916,11 +934,11 @@ class FundingInstructions(models.Model):
     for fa in stripe_obj.bank_transfer.financial_addresses:
       if (fa.type == 'aba') and (fa.aba is not None):
         data.update({
-          'account_holder_address': fa.aba.account_holder_address.to_dict(),
+          'account_holder_address': fa.aba.account_holder_address,
           'account_holder_name': fa.aba.account_holder_name,
           'account_number': fa.aba.account_number,
           'account_type': fa.aba.account_type,
-          'bank_address': fa.aba.bank_address.to_dict(),
+          'bank_address': fa.aba.bank_address,
           'bank_name': fa.aba.bank_name,
           'routing_number': fa.aba.routing_number,
         })

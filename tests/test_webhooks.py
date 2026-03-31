@@ -27,7 +27,7 @@ class DbBlocker(Protocol):
 
 
 @pytest.mark.django_db(transaction=True)
-class TestStripeWebhooks:
+class TestWebhooks:
 
   @pytest.fixture(autouse=True)
   def setup_stripe(self) -> None:
@@ -95,6 +95,11 @@ class TestStripeWebhooks:
       'statement_descriptor': 'STATEMENT',
       'metadata': {'category': 'Test Product'},
     })
+    d_product = self.wait_for_object(
+      stripe_models.Product,
+      id=s_product.id,
+    )
+
     s_price = self.stripe_client.v1.prices.create(params={
       'product': s_product.id,
       'nickname': 'Test Nickname',
@@ -103,12 +108,22 @@ class TestStripeWebhooks:
       'recurring': {'interval': 'year'},
       'metadata': {'category': 'Test Price'},
     })
+    d_price = self.wait_for_object(
+      stripe_models.Price,
+      id=s_price.id,
+    )
+
     s_coupon = self.stripe_client.v1.coupons.create(params={
       'name': f'Test Coupon {time.time()}',
       'percent_off': 20,
       'duration': 'once',
       'applies_to': {'products': [s_product.id]},
     })
+    d_coupon = self.wait_for_object(
+      stripe_models.Coupon,
+      id=s_coupon.id,
+    )
+
     s_promo = self.stripe_client.v1.promotion_codes.create(params={
       'promotion': {
         'type': 'coupon',
@@ -116,17 +131,21 @@ class TestStripeWebhooks:
       },
       'code': f'PROMO_{int(time.time())}'
     })
-
-    d_product = self.wait_for_object(stripe_models.Product, id=s_product.id)
-    d_price = self.wait_for_object(stripe_models.Price, id=s_price.id)
-    d_coupon = self.wait_for_object(stripe_models.Coupon, id=s_coupon.id)
-    d_promo = self.wait_for_object(stripe_models.PromotionCode, id=s_promo.id)
+    d_promo = self.wait_for_object(
+      stripe_models.PromotionCode,
+      id=s_promo.id,
+    )
 
     # Billing primatives
     s_customer = self.stripe_client.v1.customers.create(params={
       'name': 'Test Customer',
       'email': 'test@customer.com',
     })
+    d_customer = self.wait_for_object(
+      stripe_models.Customer,
+      id=s_customer.id
+    )
+
     s_payment_method = self.stripe_client.v1.payment_methods.create(params={
       'type': 'card',
       'card': {'token': 'tok_visa'},
@@ -135,6 +154,11 @@ class TestStripeWebhooks:
       s_payment_method.id,
       params={'customer': s_customer.id},
     )
+    d_payment_method = self.wait_for_object(
+      stripe_models.PaymentMethod,
+      id=s_payment_method.id
+    )
+
     s_subscription = self.stripe_client.v1.subscriptions.create(params={
       'customer': s_customer.id,
       'items': [{'price': s_price.id, 'quantity': 1}],
@@ -144,14 +168,6 @@ class TestStripeWebhooks:
       'payment_behavior': 'default_incomplete',
     })
 
-    d_customer = self.wait_for_object(
-      stripe_models.Customer,
-      id=s_customer.id
-    )
-    d_payment_method = self.wait_for_object(
-      stripe_models.PaymentMethod,
-      id=s_payment_method.id
-    )
     d_payment_intent = self.wait_for_object(
       stripe_models.PaymentIntent,
       customer_id=s_customer.id,
@@ -176,14 +192,23 @@ class TestStripeWebhooks:
     )
 
     # Refund the charge
+    d_charge = self.wait_for_object(
+      stripe_models.Charge,
+      payment_intent_id=s_payment_intent.id,
+    )
     s_refund = self.stripe_client.v1.refunds.create(params={
       'amount': s_payment_intent.amount,
       'payment_intent': s_payment_intent.id,
       'reason': 'requested_by_customer',
     })
     self.wait_for_object(
+      stripe_models.BalanceTransaction,
+      refunds=s_refund.id,
+    )
+    self.wait_for_object(
       stripe_models.Refund,
       id=s_refund.id,
+      charge_id=d_charge.id,
     )
 
     # Test ForeignKey relations
