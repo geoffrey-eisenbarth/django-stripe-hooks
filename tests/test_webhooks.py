@@ -1,14 +1,10 @@
 from decimal import Decimal
 import time
-from typing import (
-  TypeVar, Protocol,
-  Any, Generator, ContextManager, cast
-)
+from typing import TypeVar, Protocol, Any, Generator, ContextManager
 
 import stripe
 import pytest
 
-from django.db import models
 from django.conf import settings
 from django.core.handlers.wsgi import WSGIHandler
 from django.core.signals import got_request_exception
@@ -18,7 +14,7 @@ from django_stripe_hooks import models as stripe_models
 from pytest_django.live_server_helper import LiveServer
 
 
-T = TypeVar('T', bound=models.Model)
+T = TypeVar('T', bound='stripe_models.StripeModel[Any]')
 
 
 class DbBlocker(Protocol):
@@ -74,19 +70,26 @@ class TestWebhooks:
     **kwargs: Any,
   ) -> T:
     """Generic polling logic to detect object existence."""
-    assert stripe_models.has_manager(model_class)
     retries = timeout * 2
     while retries > 0:
       if obj := model_class.objects.filter(**kwargs).first():
-        return cast(T, obj)
+        return obj
       time.sleep(0.5)
       retries -= 1
     pytest.fail(
       f'Timed out waiting for create on {model_class.__name__} with {kwargs=}'
     )
 
-  def test_create(self, live_server: LiveServer) -> None:
-    """Integration testing for Product and Billing primatives."""
+  def test_crud(self, live_server: LiveServer) -> None:
+    """Integration testing for Product and Billing primatives.
+
+    Notes
+    -----
+    Each method of TestWebhooks will set up its own database and rollback
+    before the next test, so it is important to cram everything into one
+    method in order to ensure that delayed webhooks still have access to
+    the relevant database objects.
+    """
 
     # Product primatives
     s_product = self.stripe_client.v1.products.create(params={
@@ -226,23 +229,17 @@ class TestWebhooks:
     # Test currency unit conversion
     assert d_price.unit_amount == Decimal(20.00)
 
-  def test_delete(self, live_server: LiveServer) -> None:
+    # Test deletion webhooks and soft deletes
     s_product = self.stripe_client.v1.products.create(params={
       'name': f'Delete Product {time.time()}',
-      'description': 'Description for delete product',
+      'description': 'Description for deleted product',
       'statement_descriptor': 'STATEMENT',
-      'metadata': {'category': 'Delete Product'},
+      'metadata': {'category': 'Test Product'},
     })
-    s_coupon = self.stripe_client.v1.coupons.create(params={
-      'name': f'Test Coupon {time.time()}',
-      'percent_off': 20,
-      'duration': 'once',
-      'applies_to': {'products': [s_product.id]},
-    })
-    s_customer = self.stripe_client.v1.customers.create(params={
-      'name': 'Delete Customer',
-      'email': 'delete@customer.com',
-    })
+    d_product = self.wait_for_object(
+      stripe_models.Product,
+      id=s_product.id,
+    )
 
     self.stripe_client.v1.products.delete(s_product.id)
     self.stripe_client.v1.coupons.delete(s_coupon.id)

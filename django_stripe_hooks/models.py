@@ -1,33 +1,27 @@
 import datetime as dt
 from decimal import Decimal
 from typing import (
-  TypeVar, Generic, TypeGuard, Protocol,
+  TypeVar, Generic,
   Any, Self, Tuple, Iterable,
-  runtime_checkable, cast,
 )
 
 import stripe
 
-from django.core.exceptions import ObjectDoesNotExist
 from django.core.validators import RegexValidator
-from django.db import models, transaction, IntegrityError
+from django.db import models
 from django.utils import timezone
 from django.utils.functional import cached_property
 from django.utils.safestring import mark_safe
 from django.utils.translation import gettext_lazy as _
 
+from django_stripe_hooks.managers import StripeManager, is_stripe_model
+
 
 T = TypeVar('T', bound=stripe.StripeObject)
-Deserialized = Tuple[dict[str, Any], dict[str, Iterable[models.Model]]]
-
-
-@runtime_checkable
-class ManagedModel(Protocol):
-  objects: models.Manager[models.Model]
-
-
-def has_manager(val: Any) -> TypeGuard[type[ManagedModel]]:
-  return isinstance(val, type) and hasattr(val, 'objects')
+Deserialized = Tuple[
+  dict[str, Any],
+  dict[str, Iterable['StripeModel[stripe.StripeObject]']]
+]
 
 
 CURRENCIES = (
@@ -38,6 +32,8 @@ CURRENCIES = (
 
 class StripeModel(models.Model, Generic[T]):
   """Common Stripe model methods and properties."""
+
+  API_EXPAND_FIELDS: tuple[str, ...] = ()
 
   id = models.CharField(
     max_length=255,
@@ -52,7 +48,7 @@ class StripeModel(models.Model, Generic[T]):
     ),
   )
 
-  objects: models.Manager[Self]
+  objects = StripeManager()
 
   class Meta:
     abstract = True
@@ -80,18 +76,25 @@ class StripeModel(models.Model, Generic[T]):
     elif isinstance(field, models.JSONField):
       value = getattr(value, 'data', value) or field.default()
     elif isinstance(field, (models.ForeignKey, models.OneToOneField)):
-      value = getattr(value, 'id', value)
-
+      if is_stripe_model(field.related_model):
+        if isinstance(value, stripe.StripeObject):
+          value = field.related_model.objects.from_stripe(value)
     elif isinstance(field, models.ManyToOneRel):
-      # Related objects can't exist yet, get list of Stripe objects
-      value = getattr(value, 'data', [])
+      # Related objects can't exist yet, so we just instantiate them
+      # value = getattr(value, 'data', [])
+      RelatedModel = field.related_model
+      if is_stripe_model(RelatedModel):
+        value = list(map(
+          lambda x: RelatedModel(**RelatedModel.deserialize(x)[0]),
+          getattr(value, 'data', []),
+        ))
     elif isinstance(field, models.ManyToManyField):
       # Related objects must already exist, get QuerySet of Django objects
       RelatedModel = field.related_model
-      assert has_manager(RelatedModel)
-      value = RelatedModel.objects.filter(
-        id__in=[getattr(v, 'id', v) for v in value]
-      )
+      if is_stripe_model(RelatedModel):
+        value = RelatedModel.objects.filter(
+          id__in=[getattr(v, 'id', v) for v in value]
+        )
     return value
 
   @classmethod
@@ -109,59 +112,14 @@ class StripeModel(models.Model, Generic[T]):
         if isinstance(field, (models.ManyToOneRel, models.ManyToManyField)):
           related_objs[field.name] = value
         elif isinstance(field, (models.ForeignKey, models.OneToOneField)):
-          data[field.attname] = value
+          if isinstance(value, str):
+            data[field.attname] = value
+          else:
+            data[field.name] = value
         else:
           data[field.name] = value
 
     return data, related_objs
-
-  # TODO: Move to manager?
-  # TODO: Refactor this, too complicated
-  @classmethod
-  def from_stripe(cls, stripe_obj: T) -> Self:
-    """Updates or creates a Django instance from a Stripe API object."""
-
-    try:
-      with transaction.atomic():
-        data, related_objs = cls.deserialize(stripe_obj)
-
-        django_obj, created = cls.objects.update_or_create(
-          id=data.pop('id'),
-          defaults=data,
-        )
-
-        for field_name, objs in related_objs.items():
-          field = cls._meta.get_field(field_name)
-          if isinstance(field, models.ManyToManyField):
-            getattr(django_obj, field_name).set(objs)
-          elif isinstance(field, models.ManyToOneRel):
-            RelatedModel = field.related_model
-            assert has_manager(RelatedModel)
-            assert issubclass(RelatedModel, StripeModel)
-            for related_obj in objs:
-              RelatedModel.from_stripe(related_obj)
-            django_obj.refresh_from_db()
-
-      return django_obj
-    except IntegrityError as outer_e:
-      # Raise a specific DoesNotExist exception
-      for field in cls._meta.get_fields():
-        if not isinstance(field, (models.ForeignKey, models.OneToOneField)):
-          continue
-
-        RelatedModel = field.related_model
-        assert has_manager(RelatedModel)
-        assert issubclass(RelatedModel, StripeModel)
-
-        try:
-          RelatedModel.objects.get(id=data[field.attname])
-        except ObjectDoesNotExist as inner_e:
-          raise ObjectDoesNotExist(
-            f"{RelatedModel.__name__} {data[field.attname]} does not exit."
-          ) from inner_e
-      raise IntegrityError(
-        f"IntegrityError writing {cls.__name__} with {data=}"
-      ) from outer_e
 
 
 class Product(StripeModel[stripe.Product]):
@@ -218,6 +176,8 @@ class Price(StripeModel[stripe.Price]):
   Stripe Docs: https://stripe.com/docs/api/prices
 
   """
+
+  API_EXPAND_FIELDS = ('product',)
 
   TYPES = (
     ('recurring', _("Recurring charge")),
@@ -397,6 +357,8 @@ class Coupon(StripeModel[stripe.Coupon]):
 
   """
 
+  API_EXPAND_FIELDS = ('applies_to',)
+
   DURATIONS = (
     ('once', _("Once")),
     ('forever', _("Forever")),
@@ -492,6 +454,8 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
 
   """
 
+  API_EXPAND_FIELDS = ('promotion.coupon',)
+
   active = models.BooleanField(
     verbose_name=_("Active?")
   )
@@ -541,9 +505,14 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
   @classmethod
   def deserialize(cls, stripe_obj: stripe.PromotionCode) -> Deserialized:
     data, related_objs = super().deserialize(stripe_obj)
+
     if stripe_obj.promotion:
-      if (stripe_coupon := stripe_obj.promotion.coupon):
-        data['coupon_id'] = getattr(stripe_coupon, 'id', stripe_coupon)
+      stripe_coupon = stripe_obj.promotion.coupon
+      if isinstance(stripe_coupon, stripe.Coupon):
+        data['coupon'] = Coupon.objects.from_stripe(stripe_coupon)
+      elif isinstance(stripe_coupon, str):
+        data['coupon_id'] = stripe_coupon
+
     return data, related_objs
 
   @property
@@ -570,13 +539,6 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
     super().save(*args, **kwargs)
 
 
-# TODO: Delete?
-# coupon.deleted
-# customer.deleted
-# customer.subscription.deleted
-# invoice.deleted
-# price.deleted
-# product.deleted
 class Customer(StripeModel[stripe.Customer]):
   """Django implementation of Stripe Customers.
 
@@ -617,8 +579,11 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
 
   """
 
+  API_EXPAND_FIELDS = ('customer',)
+
   TYPES = (
     ('card', _("Credit/Debit Card")),
+    ('customer_balance', _("Customer Balance")),
     ('afterpay_clearpay', _("Afterpay/Clearpay")),
     ('alipay', _("Alipay (China)")),
     ('au_becs_debit', _("BECS Debit (Australia)")),
@@ -634,7 +599,6 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
     ('sepa_debit', _("SEPA Direct Debit (European Union)")),
     ('sofort', _("Sofort (Europe)")),
   )
-
   CARD_BRANDS = (
     ('amex', _("American Express")),
     ('cartes_bancaires', _("Cartes Bancaires")),
@@ -724,11 +688,12 @@ class PaymentIntent(StripeModel[stripe.PaymentIntent]):
 
   """
 
+  API_EXPAND_FIELDS = ('customer', 'payment_method')
+
   FUTURE_USAGES = (
     ('on_session', _("On Session")),
     ('off_session', _("Off Session")),
   )
-
   STATUSES = (
     ('requires_payment_method', _("Requires payment method")),
     ('requires_confirmation', _("Requires confirmation")),
@@ -950,6 +915,7 @@ class FundingInstructions(models.Model):
 
     return data, {}
 
+  # TODO:
   @classmethod
   def from_stripe(
     cls,
@@ -958,12 +924,11 @@ class FundingInstructions(models.Model):
   ) -> Self:
     """Returns a Django model instance based on Stripe API object."""
     data, related_objs = FundingInstructions.deserialize(stripe_obj)
-    assert has_manager(cls)
     django_obj, created = cls.objects.update_or_create(
       customer=customer,
       defaults=data,
     )
-    return cast(Self, django_obj)
+    return django_obj
 
 
 class Subscription(StripeModel[stripe.Subscription]):
@@ -975,6 +940,9 @@ class Subscription(StripeModel[stripe.Subscription]):
   Stripe Docs: https://stripe.com/docs/api/subscriptions
 
   """
+
+  # TODO: missing promotion_code
+  API_EXPAND_FIELDS = ('customer', 'default_payment_method.customer')
 
   STATUSES = (
     ('incomplete', _("Incomplete")),
@@ -1046,11 +1014,14 @@ class Subscription(StripeModel[stripe.Subscription]):
   def deserialize(cls, stripe_obj: stripe.Subscription) -> Deserialized:
     data, related_objs = super().deserialize(stripe_obj)
 
-    # Add PromotionCode
     stripe_discount = getattr(stripe_obj, 'discount', None)
     stripe_invoice = getattr(stripe_obj, 'latest_invoice', None)
     if d := (stripe_discount or getattr(stripe_invoice, 'discount', None)):
-      data['promotion_code_id'] = d.promotion_code
+      stripe_promo = d.promotion_code
+      if isinstance(stripe_promo, stripe.PromotionCode):
+        data['promotion_code'] = PromotionCode.objects.from_stripe(stripe_promo)  # noqa: E501
+      elif isinstance(stripe_promo, str):
+        data['promotion_code_id'] = stripe_promo
 
     return data, related_objs
 
@@ -1116,6 +1087,11 @@ class Invoice(StripeModel[stripe.Invoice]):
   Stripe Docs: https://stripe.com/docs/api/invoices
 
   """
+
+  API_EXPAND_FIELDS = (
+    'customer',
+    'parent.subscription_details.subscription',
+  )
 
   COLLECTION_METHODS = (
     ('charge_automatically', _("Charge automatically")),
@@ -1229,14 +1205,6 @@ class Invoice(StripeModel[stripe.Invoice]):
     null=True,
     verbose_name=_("Subscription"),
   )
-  payment_intent = models.OneToOneField(
-    PaymentIntent,
-    on_delete=models.SET_NULL,
-    related_name='invoice',
-    blank=True,
-    null=True,
-    verbose_name=_("Payment intent"),
-  )
 
   class Meta(StripeModel.Meta):
     verbose_name = _("Invoice")
@@ -1248,8 +1216,11 @@ class Invoice(StripeModel[stripe.Invoice]):
     data, related_objs = super().deserialize(stripe_obj)
 
     if stripe_obj.parent and stripe_obj.parent.subscription_details:
-      if (stripe_sub := stripe_obj.parent.subscription_details.subscription):
-        data['subscription_id'] = getattr(stripe_sub, 'id', stripe_sub)
+      stripe_sub = stripe_obj.parent.subscription_details.subscription
+      if isinstance(stripe_sub, stripe.Subscription):
+        data['subscription'] = Subscription.objects.from_stripe(stripe_sub)
+      elif isinstance(stripe_sub, str):
+        data['subscription_id'] = stripe_sub
 
     data['discount'] = Decimal(0)
     for discount in (stripe_obj.total_discount_amounts or []):
@@ -1258,20 +1229,6 @@ class Invoice(StripeModel[stripe.Invoice]):
     data['tax'] = Decimal(0)
     for tax in (stripe_obj.total_taxes or []):
       data['tax'] += Decimal(tax.amount / 100)
-
-    if (payment_intent := getattr(stripe_obj, 'payment_intent', None)) is not None:  # noqa: E501
-      PaymentIntent.from_stripe(payment_intent)
-      data['payment_intent_id'] = payment_intent.id
-
-    if (payment_method := getattr(stripe_obj, 'payment_method', None)) is not None:  # noqa: E501
-      if payment_method.type == 'card':
-        PaymentMethod.from_stripe(payment_method)
-      elif payment_method.type == 'customer_balance':
-        pass
-      else:
-        raise NotImplementedError(
-          f"Unsupported PaymentMethod type: {payment_method.type}"
-        )
 
     return data, related_objs
 
@@ -1397,6 +1354,8 @@ class Charge(StripeModel[stripe.Charge]):
 
   """
 
+  API_EXPAND_FIELDS = ('customer', 'payment_intent', 'balance_transaction')
+
   STATUSES = (
     ('succeeded', _("Succeeded")),
     ('pending', _("Pending")),
@@ -1469,14 +1428,6 @@ class Charge(StripeModel[stripe.Charge]):
     ordering = ['-created']
     get_latest_by = 'created'
 
-  @classmethod
-  def deserialize(cls, stripe_obj: stripe.Charge) -> Deserialized:
-    data, related_objs = super().deserialize(stripe_obj)
-    if (balance_txn := getattr(stripe_obj, 'balance_transaction', None)) is not None:  # noqa: E501
-      BalanceTransaction.from_stripe(balance_txn)
-      data['balance_transaction_id'] = balance_txn.id
-    return data, related_objs
-
 
 class Refund(StripeModel[stripe.Refund]):
   """Django implementation of Stripe Refunds.
@@ -1487,6 +1438,8 @@ class Refund(StripeModel[stripe.Refund]):
   Stripe Docs: https://stripe.com/docs/api/refunds
 
   """
+
+  API_EXPAND_FIELDS = ('charge.balance_transaction', 'balance_transaction')
 
   REASONS = (
     ('duplicate', _("Duplicate charge")),
@@ -1546,11 +1499,3 @@ class Refund(StripeModel[stripe.Refund]):
   class Meta(StripeModel.Meta):
     verbose_name = _("Refund")
     verbose_name_plural = _("Refunds")
-
-  @classmethod
-  def deserialize(cls, stripe_obj: stripe.Refund) -> Deserialized:
-    data, related_objs = super().deserialize(stripe_obj)
-    if (balance_txn := getattr(stripe_obj, 'balance_transaction', None)) is not None:  # noqa: E501
-      BalanceTransaction.from_stripe(balance_txn)
-      data['balance_transaction_id'] = balance_txn.id
-    return data, related_objs

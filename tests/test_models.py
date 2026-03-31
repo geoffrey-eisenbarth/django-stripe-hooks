@@ -23,7 +23,7 @@ class TestSpecializedModels:
       'email': 'token@test.com',
       'name': 'ConfirmationToken Test',
     })
-    d_customer = Customer.from_stripe(s_customer)
+    d_customer = Customer.objects.from_stripe(s_customer)
 
     s_token = self.stripe_client.v1.test_helpers.confirmation_tokens.create(
       params={'payment_method': 'pm_card_visa'},
@@ -53,7 +53,7 @@ class TestSpecializedModels:
       'email': 'funding@test.com',
       'name': 'FundingInstructions Test',
     })
-    d_customer = Customer.from_stripe(s_customer)
+    d_customer = Customer.objects.from_stripe(s_customer)
 
     s_fi = self.stripe_client.v1.customers.funding_instructions.create(
       s_customer.id,
