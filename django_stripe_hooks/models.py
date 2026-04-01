@@ -507,13 +507,13 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
   )
   coupon = models.ForeignKey(
     Coupon,
-    on_delete=models.CASCADE,
+    on_delete=models.PROTECT,
     related_name='promotion_codes',
     verbose_name=_("Coupon"),
   )
-  customemr = models.ForeignKey(
+  customer = models.ForeignKey(
     'Customer',
-    on_delete=models.CASCADE,
+    on_delete=models.SET_NULL,
     null=True,
     blank=True,
     verbose_name=_("Customer"),
@@ -572,7 +572,7 @@ class Discount(StripeModel[stripe.Discount]):
 
   customer = models.ForeignKey(
     'Customer',
-    on_delete=models.CASCADE,
+    on_delete=models.SET_NULL,
     related_name='discounts',
     verbose_name=_("Customer"),
     null=True,
@@ -580,7 +580,7 @@ class Discount(StripeModel[stripe.Discount]):
   )
   subscription = models.ForeignKey(
     'Subscription',
-    on_delete=models.CASCADE,
+    on_delete=models.SET_NULL,
     related_name='discounts',
     verbose_name=_("Subscription"),
     null=True,
@@ -588,7 +588,7 @@ class Discount(StripeModel[stripe.Discount]):
   )
   subscription_item = models.ForeignKey(
     'SubscriptionItem',
-    on_delete=models.CASCADE,
+    on_delete=models.SET_NULL,
     related_name='discounts',
     verbose_name=_("Subscription items"),
     null=True,
@@ -610,7 +610,7 @@ class Discount(StripeModel[stripe.Discount]):
   )
   coupon = models.ForeignKey(
     Coupon,
-    on_delete=models.CASCADE,
+    on_delete=models.PROTECT,
     related_name='discounts',
     verbose_name=_("Coupon"),
   )
@@ -821,7 +821,7 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
   )
   card = models.ForeignKey(
     Card,
-    on_delete=models.CASCADE,
+    on_delete=models.SET_NULL,
     related_name='payment_methods',
     verbose_name=_("Card"),
     null=True,
@@ -984,7 +984,7 @@ class ConfirmationToken(models.Model):
     verbose_name=_("Customer"),
   )
 
-  class Meta(StripeModel.Meta):
+  class Meta:
     verbose_name = _("Confirmation Token")
     verbose_name_plural = _("Confirmation Tokens")
     ordering = ['customer', '-created']
@@ -1053,7 +1053,7 @@ class FundingInstructions(models.Model):
     verbose_name=_("SWIFT code"),
   )
 
-  class Meta(StripeModel.Meta):
+  class Meta:
     verbose_name = _("Funding Instructions")
     verbose_name_plural = _("Funding Instructions")
 
@@ -1160,19 +1160,10 @@ class Subscription(StripeModel[stripe.Subscription]):
       "Charge using the default source on file or email invoice with instructions"  # noqa: E501
     ),
   )
-  latest_invoice = models.ForeignKey(
-    'Invoice',
-    on_delete=models.SET_NULL,
-    related_name='subscriptions',
-    blank=True,
-    null=True,
-    verbose_name=_("Latest invoice"),
-  )
 
   class Meta(StripeModel.Meta):
     verbose_name = _("Subscription")
     verbose_name_plural = _("Subscriptions")
-    get_latest_by = 'current_period_start'
 
   @cached_property
   def current_period_start(self) -> dt.datetime:
@@ -1254,6 +1245,9 @@ class Invoice(StripeModel[stripe.Invoice]):
     ('void', _("Void")),
   )
 
+  created = models.DateTimeField(
+    verbose_name=_("Created"),
+  )
   number = models.CharField(
     max_length=255,
     verbose_name=_("Number"),
@@ -1390,13 +1384,13 @@ class Invoice(StripeModel[stripe.Invoice]):
   )
   customer = models.ForeignKey(
     Customer,
-    on_delete=models.CASCADE,
+    on_delete=models.PROTECT,
     related_name='invoices',
     verbose_name=_("Customer"),
   )
   subscription = models.ForeignKey(
     Subscription,
-    on_delete=models.CASCADE,
+    on_delete=models.SET_NULL,
     related_name='invoices',
     blank=True,
     null=True,
@@ -1406,7 +1400,7 @@ class Invoice(StripeModel[stripe.Invoice]):
   class Meta(StripeModel.Meta):
     verbose_name = _("Invoice")
     verbose_name_plural = _("Invoices")
-    get_latest_by = 'period_start'
+    get_latest_by = 'created'
 
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Invoice) -> Deserialized:
@@ -1599,19 +1593,21 @@ class Charge(StripeModel[stripe.Charge]):
   )
   customer = models.ForeignKey(
     Customer,
-    on_delete=models.CASCADE,
+    on_delete=models.PROTECT,
     related_name='charges',
     verbose_name=_("Customer"),
   )
   payment_intent = models.ForeignKey(
     PaymentIntent,
-    on_delete=models.CASCADE,
+    on_delete=models.SET_NULL,
     related_name='charges',
     verbose_name=_("Payment intent"),
+    blank=True,
+    null=True,
   )
   balance_transaction = models.ForeignKey(
     BalanceTransaction,
-    on_delete=models.CASCADE,
+    on_delete=models.PROTECT,
     related_name='charges',
     verbose_name=_("Balance transaction"),
   )
