@@ -196,7 +196,7 @@ class SubscriptionInline(StripeModelInline[Subscription, Customer]):
     'status',
     'current_period_start',
     'current_period_end',
-    'promotion_code',
+    'discounts',
     'cancel_at_period_end',
   )
 
@@ -278,7 +278,6 @@ class SubscriptionAdmin(StripeModelAdmin[Subscription]):
   list_display = (
     'customer',
     'status_verbose',
-    'promotion_code',
     'current_period_end',
   )
   list_select_related = (
@@ -291,8 +290,8 @@ class SubscriptionAdmin(StripeModelAdmin[Subscription]):
         'customer',
         'current_period_start',
         'current_period_end',
-        'promotion_code',
         'cancel_at_period_end',
+        'discounts',
       ),
     }),
   )

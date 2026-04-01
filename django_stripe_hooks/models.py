@@ -18,10 +18,14 @@ from django_stripe_hooks.managers import StripeManager, is_stripe_model
 
 
 T = TypeVar('T', bound=stripe.StripeObject)
+ObjectFields = dict[str, Any]
+PreSaveFields = dict[str, stripe.StripeObject]
+PostSaveFields = dict[str, Iterable[models.Model]]
+
 Deserialized = Tuple[
-  dict[str, Any],
-  dict[str, Iterable['StripeModel[stripe.StripeObject]']],
-  dict[str, stripe.StripeObject],
+  ObjectFields,
+  PreSaveFields,
+  PostSaveFields,
 ]
 
 
@@ -75,7 +79,7 @@ class StripeModel(models.Model, Generic[T]):
       except TypeError:
         value = Decimal(0)
     elif isinstance(field, models.JSONField):
-      value = getattr(value, 'data', value) or field.default()
+      value = field.default(getattr(value, 'data', value))
     elif isinstance(field, (models.ForeignKey, models.OneToOneField)):
       pass  # string IDs and stripe.StripeObjects are routed in deserialize()
     elif isinstance(field, models.ManyToOneRel):
@@ -98,9 +102,9 @@ class StripeModel(models.Model, Generic[T]):
 
   @classmethod
   def deserialize(cls, stripe_obj: T) -> Deserialized:
-    """Convert Stripe object to model field values."""
+    """Convert stripe.StripeObject to Django StripeModel field values."""
 
-    data, post_save, pre_save = {}, {}, {}
+    data, pre_save, post_save = {}, {}, {}
 
     for field in cls._meta.get_fields():
       if field.name in stripe_obj:
@@ -112,7 +116,6 @@ class StripeModel(models.Model, Generic[T]):
           post_save[field.name] = value
         elif isinstance(field, (models.ForeignKey, models.OneToOneField)):
           if isinstance(value, stripe.StripeObject):
-            # Expanded FK object — manager will call from_stripe()
             pre_save[field.name] = value
           elif isinstance(value, str):
             data[field.attname] = value
@@ -121,7 +124,7 @@ class StripeModel(models.Model, Generic[T]):
         else:
           data[field.name] = value
 
-    return data, post_save, pre_save
+    return data, pre_save, post_save
 
 
 class Product(StripeModel[stripe.Product]):
@@ -293,14 +296,16 @@ class Price(StripeModel[stripe.Price]):
 
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Price) -> Deserialized:
-    data, post_save, pre_save = super().deserialize(stripe_obj)
+    data, pre_save, post_save = super().deserialize(stripe_obj)
+
     if (recurring := getattr(stripe_obj, 'recurring', None)) is not None:
       data.update({
         'interval': recurring.interval,
         'interval_count': recurring.interval_count,
         'usage_type': recurring.usage_type,
       })
-    return data, post_save, pre_save
+
+    return data, pre_save, post_save
 
 
 class PriceTier(models.Model):
@@ -345,8 +350,8 @@ class PriceTier(models.Model):
   )
 
   @classmethod
-  def deserialize(cls, stripe_obj: dict[str, Any]) -> Deserialized:
-    return stripe_obj, {}, {}
+  def deserialize(cls, stripe_obj: stripe.StripeObject) -> Deserialized:
+    return dict(stripe_obj), {}, {}
 
 
 class Coupon(StripeModel[stripe.Coupon]):
@@ -423,6 +428,11 @@ class Coupon(StripeModel[stripe.Coupon]):
     editable=False,
     verbose_name=_("Current number of redemptions"),
   )
+  redeem_by = models.DateTimeField(
+    null=True,
+    blank=True,
+    verbose_name=_("Redeem by"),
+  ),
   valid = models.BooleanField(
     verbose_name=_("Valid?"),
   )
@@ -437,13 +447,15 @@ class Coupon(StripeModel[stripe.Coupon]):
 
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Coupon) -> Deserialized:
-    data, post_save, pre_save = super().deserialize(stripe_obj)
+    data, pre_save, post_save = super().deserialize(stripe_obj)
+
     if (applies_to := getattr(stripe_obj, 'applies_to', None)) is not None:
       post_save['products'] = cls.stripe_clean(
         field=Coupon._meta.get_field('products'),
         value=applies_to.products,
       )
-    return data, post_save, pre_save
+
+    return data, pre_save, post_save
 
 
 class PromotionCode(StripeModel[stripe.PromotionCode]):
@@ -499,6 +511,13 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
     related_name='promotion_codes',
     verbose_name=_("Coupon"),
   )
+  customemr = models.ForeignKey(
+    'Customer',
+    on_delete=models.CASCADE,
+    null=True,
+    blank=True,
+    verbose_name=_("Customer"),
+  )
 
   class Meta(StripeModel.Meta):
     verbose_name = _("Promotion Code")
@@ -506,7 +525,7 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
 
   @classmethod
   def deserialize(cls, stripe_obj: stripe.PromotionCode) -> Deserialized:
-    data, post_save, pre_save = super().deserialize(stripe_obj)
+    data, pre_save, post_save = super().deserialize(stripe_obj)
 
     if stripe_obj.promotion:
       stripe_coupon = stripe_obj.promotion.coupon
@@ -515,7 +534,7 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
       elif isinstance(stripe_coupon, str):
         data['coupon_id'] = stripe_coupon
 
-    return data, post_save, pre_save
+    return data, pre_save, post_save
 
   @property
   def redemptions(self) -> str:
@@ -539,6 +558,87 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
       # Confirmed 02/13/2026: this has not been fixed.
       self.active = False
     super().save(*args, **kwargs)
+
+
+class Discount(StripeModel[stripe.Discount]):
+  """Django implementation of Stripe Discounts.
+
+  Notes
+  -----
+
+  Stripe Docs: https://stripe.com/docs/api/discounts
+
+  """
+
+  customer = models.ForeignKey(
+    'Customer',
+    on_delete=models.CASCADE,
+    related_name='discounts',
+    verbose_name=_("Customer"),
+    null=True,
+    blank=True
+  )
+  subscription = models.ForeignKey(
+    'Subscription',
+    on_delete=models.CASCADE,
+    related_name='discounts',
+    verbose_name=_("Subscription"),
+    null=True,
+    blank=True,
+  )
+  subscription_item = models.ForeignKey(
+    'SubscriptionItem',
+    on_delete=models.CASCADE,
+    related_name='discounts',
+    verbose_name=_("Subscription items"),
+    null=True,
+    blank=True,
+  )
+  invoice = models.ForeignKey(
+    'Invoice',
+    on_delete=models.SET_NULL,
+    related_name='discounts',
+    null=True,
+    blank=True,
+  )
+  promotion_code = models.ForeignKey(
+    PromotionCode,
+    on_delete=models.PROTECT,
+    related_name='discounts',
+    null=True,
+    blank=True,
+  )
+  coupon = models.ForeignKey(
+    Coupon,
+    on_delete=models.CASCADE,
+    related_name='discounts',
+    verbose_name=_("Coupon"),
+  )
+  start = models.DateTimeField(
+    verbose_name=_("Start time"),
+  )
+  end = models.DateTimeField(
+    blank=True,
+    null=True,
+    verbose_name=_("End time"),
+  )
+
+  class Meta(StripeModel.Meta):
+    verbose_name = _("Discount")
+    verbose_name_plural = _("Discounts")
+
+  @classmethod
+  def deserialize(cls, stripe_obj: stripe.Discount) -> Deserialized:
+    data, pre_save, post_save = super().deserialize(stripe_obj)
+
+    if stripe_obj.source:
+      stripe_coupon = stripe_obj.source.coupon
+      if isinstance(stripe_coupon, stripe.Coupon):
+        pre_save['coupon'] = stripe_coupon
+      elif isinstance(stripe_coupon, str):
+        data['coupon_id'] = stripe_coupon
+
+    return data, pre_save, post_save
 
 
 class Customer(StripeModel[stripe.Customer]):
@@ -569,6 +669,118 @@ class Customer(StripeModel[stripe.Customer]):
     default=False,
     verbose_name=_("Deleted?"),
   )
+
+  class Meta(StripeModel.Meta):
+    verbose_name = _("Customer")
+    verbose_name_plural = _("Customers")
+    ordering = ['email']
+
+
+class Card(StripeModel[stripe.Card]):
+  """Django implementation of Stripe Cards.
+
+  Notes
+  -----
+  Stripe Docs: https://stripe.com/docs/api/cards
+
+  """
+
+  BRANDS = (
+    ('amex', _("American Express")),
+    ('cartes_bancaires', _("Cartes Bancaires")),
+    ('diners', _("Diners Club")),
+    ('discover', _("Discover")),
+    ('jcb', _("JCB")),
+    ('mastercard', _("MasterCard")),
+    ('visa', _("Visa")),
+    ('unionpay', _("UnionPay")),
+    ('unknown', _("Unknown")),
+  )
+
+  brand = models.CharField(
+    max_length=16,
+    choices=BRANDS,
+    verbose_name=_("Card brand"),
+  )
+  exp_month = models.IntegerField(
+    verbose_name=_("Two-digit card expiration month"),
+  )
+  exp_year = models.IntegerField(
+    verbose_name=_("Four-digit card expiration year"),
+  )
+  last4 = models.CharField(
+    max_length=4,
+    verbose_name=_("Card last four"),
+  )
+  country = models.CharField(
+    max_length=2,
+    verbose_name=_("Card country"),
+    help_text=_(
+      "Two-letter ISO code representing the country of the card"
+    ),
+  )
+  address_city = models.CharField(
+    max_length=255,
+    blank=True,
+    verbose_name=_("Billing address city"),
+  )
+  address_country = models.CharField(
+    max_length=255,
+    blank=True,
+    verbose_name=_("Billing address country"),
+  )
+  address_line1 = models.CharField(
+    max_length=255,
+    blank=True,
+    verbose_name=_("Address line 1"),
+    help_text=_(
+      "Street address/PO Box/Company name"
+    ),
+  )
+  address_line2 = models.CharField(
+    max_length=255,
+    blank=True,
+    verbose_name=_("Address line 2"),
+    help_text=_(
+      "Apartment/Suite/Unit/Building",
+    ),
+  )
+  address_state = models.CharField(
+    max_length=255,
+    blank=True,
+    verbose_name=_("Billing address state"),
+    help_text=_(
+      "State/County/Province/Region"
+    ),
+  )
+  address_zip = models.CharField(
+    max_length=10,
+    blank=True,
+    verbose_name=_("Billing address ZIP code"),
+    help_text=_(
+      "ZIP or postal code"
+    ),
+  )
+  customer = models.ForeignKey(
+    Customer,
+    on_delete=models.CASCADE,
+    related_name='cards',
+    verbose_name=_("Customer"),
+  )
+
+  class Meta(StripeModel.Meta):
+    verbose_name = _("Card")
+    verbose_name_plural = _("Cards")
+    ordering = ['-exp_year', '-exp_month']
+
+  @property
+  def info(self) -> str:
+    s = "{brand} {bullets} {bullets} {bullets} {last4}".format(
+      brand=dict(self.BRANDS)[self.brand],
+      bullets='\u2022' * 4,
+      last4=self.last4,
+    )
+    return s
 
 
 class PaymentMethod(StripeModel[stripe.PaymentMethod]):
@@ -601,46 +813,19 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
     ('sepa_debit', _("SEPA Direct Debit (European Union)")),
     ('sofort', _("Sofort (Europe)")),
   )
-  CARD_BRANDS = (
-    ('amex', _("American Express")),
-    ('cartes_bancaires', _("Cartes Bancaires")),
-    ('diners', _("Diners Club")),
-    ('discover', _("Discover")),
-    ('jcb', _("JCB")),
-    ('mastercard', _("MasterCard")),
-    ('visa', _("Visa")),
-    ('unionpay', _("UnionPay")),
-    ('unknown', _("Unknown")),
-  )
 
   type = models.CharField(
     max_length=17,
     choices=TYPES,
     verbose_name=_("Type"),
   )
-  card_brand = models.CharField(
-    max_length=16,
-    choices=CARD_BRANDS,
-    verbose_name=_("Card brand"),
-  )
-  card_exp_month = models.IntegerField(
-    verbose_name=_("Two-digit card expiration month"),
-  )
-  card_exp_year = models.IntegerField(
-    verbose_name=_("Four-digit card expiration year"),
-  )
-  card_last4 = models.CharField(
-    max_length=4,
-    verbose_name=_("Card last four"),
-  )
-  zip_code = models.CharField(
-    max_length=10,
+  card = models.ForeignKey(
+    Card,
+    on_delete=models.CASCADE,
+    related_name='payment_methods',
+    verbose_name=_("Card"),
+    null=True,
     blank=True,
-    validators=[RegexValidator(
-      regex=r'(^\d{5}$)|(^\d{9}$)|(^\d{5}-\d{4}$)',
-      message=_("ZIP Coode must be 5 or 9 digits"),
-    )],
-    verbose_name=_("ZIP code"),
   )
   customer = models.ForeignKey(
     Customer,
@@ -652,32 +837,6 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
   class Meta(StripeModel.Meta):
     verbose_name = _("Payment Method")
     verbose_name_plural = _("Payment Methods")
-    ordering = ['-card_exp_year', '-card_exp_month']
-
-  @classmethod
-  def deserialize(cls, stripe_obj: stripe.PaymentMethod) -> Deserialized:
-    data, post_save, pre_save = super().deserialize(stripe_obj)
-
-    if stripe_obj.billing_details.address is not None:
-      data['zip_code'] = stripe_obj.billing_details.address.postal_code or ''
-
-    if (card := getattr(stripe_obj, 'card', None)) is not None:
-      data.update({
-        'card_brand': card.brand,
-        'card_last4': card.last4,
-        'card_exp_month': card.exp_month,
-        'card_exp_year': card.exp_year,
-      })
-    return data, post_save, pre_save
-
-  @property
-  def card_info(self) -> str:
-    s = "{brand} {bullets} {bullets} {bullets} {last4}".format(
-      brand=dict(self.CARD_BRANDS)[self.card_brand],
-      bullets='\u2022' * 4,
-      last4=self.card_last4,
-    )
-    return s
 
 
 class PaymentIntent(StripeModel[stripe.PaymentIntent]):
@@ -794,7 +953,7 @@ class ConfirmationToken(models.Model):
   )
   card_brand = models.CharField(
     max_length=16,
-    choices=PaymentMethod.CARD_BRANDS,
+    choices=Card.BRANDS,
     verbose_name=_("Card brand"),
     blank=True,
   )
@@ -838,7 +997,7 @@ class ConfirmationToken(models.Model):
   @property
   def card_info(self) -> str:
     s = "{brand} {bullets} {bullets} {bullets} {last4}".format(
-      brand=dict(PaymentMethod.CARD_BRANDS)[self.card_brand],
+      brand=dict(Card.BRANDS)[self.card_brand],
       bullets='\u2022' * 4,
       last4=self.card_last4,
     )
@@ -904,11 +1063,11 @@ class FundingInstructions(models.Model):
     for fa in stripe_obj.bank_transfer.financial_addresses:
       if (fa.type == 'aba') and (fa.aba is not None):
         data.update({
-          'account_holder_address': fa.aba.account_holder_address,
+          'account_holder_address': dict(fa.aba.account_holder_address),
           'account_holder_name': fa.aba.account_holder_name,
           'account_number': fa.aba.account_number,
           'account_type': fa.aba.account_type,
-          'bank_address': fa.aba.bank_address,
+          'bank_address': dict(fa.aba.bank_address),
           'bank_name': fa.aba.bank_name,
           'routing_number': fa.aba.routing_number,
         })
@@ -925,7 +1084,7 @@ class FundingInstructions(models.Model):
     stripe_obj: stripe.FundingInstructions,
   ) -> Self:
     """Returns a Django model instance based on Stripe API object."""
-    data, post_save = FundingInstructions.deserialize(stripe_obj)[:2]
+    data = FundingInstructions.deserialize(stripe_obj)[0]
     django_obj, created = cls.objects.update_or_create(
       customer=customer,
       defaults=data,
@@ -945,7 +1104,7 @@ class Subscription(StripeModel[stripe.Subscription]):
 
   API_EXPAND_FIELDS = (
     'customer',
-    'discounts.promotion_code',
+    'discounts.promotion_code.coupon',
     'default_payment_method.customer',
   )
 
@@ -985,14 +1144,6 @@ class Subscription(StripeModel[stripe.Subscription]):
     related_name='subscriptions',
     verbose_name=_("Customer"),
   )
-  promotion_code = models.ForeignKey(
-    PromotionCode,
-    on_delete=models.PROTECT,
-    related_name='subscriptions',
-    blank=True,
-    null=True,
-    verbose_name=_("Promotion code"),
-  )
   default_payment_method = models.ForeignKey(
     PaymentMethod,
     on_delete=models.PROTECT,
@@ -1009,26 +1160,19 @@ class Subscription(StripeModel[stripe.Subscription]):
       "Charge using the default source on file or email invoice with instructions"  # noqa: E501
     ),
   )
+  latest_invoice = models.ForeignKey(
+    'Invoice',
+    on_delete=models.SET_NULL,
+    related_name='subscriptions',
+    blank=True,
+    null=True,
+    verbose_name=_("Latest invoice"),
+  )
 
   class Meta(StripeModel.Meta):
     verbose_name = _("Subscription")
     verbose_name_plural = _("Subscriptions")
     get_latest_by = 'current_period_start'
-
-  @classmethod
-  def deserialize(cls, stripe_obj: stripe.Subscription) -> Deserialized:
-    data, post_save, pre_save = super().deserialize(stripe_obj)
-
-    stripe_discount = getattr(stripe_obj, 'discount', None)
-    stripe_invoice = getattr(stripe_obj, 'latest_invoice', None)
-    if d := (stripe_discount or getattr(stripe_invoice, 'discount', None)):
-      stripe_promo = d.promotion_code
-      if isinstance(stripe_promo, stripe.PromotionCode):
-        pre_save['promotion_code'] = stripe_promo
-      elif isinstance(stripe_promo, str):
-        data['promotion_code_id'] = stripe_promo
-
-    return data, post_save, pre_save
 
   @cached_property
   def current_period_start(self) -> dt.datetime:
@@ -1142,6 +1286,70 @@ class Invoice(StripeModel[stripe.Invoice]):
     choices=CURRENCIES,
     verbose_name=_("Currency"),
   )
+  amount_due = models.DecimalField(
+    max_digits=8,
+    decimal_places=2,
+    verbose_name=_("Amount Due"),
+    help_text=_(
+      "Final amount due at this time"
+    ),
+  )
+  amount_paid = models.DecimalField(
+    max_digits=8,
+    decimal_places=2,
+    verbose_name=_("Amount Paid"),
+    help_text=_(
+      "Amount that was paid by the customer, if any"
+    ),
+  )
+  amount_overpaid = models.DecimalField(
+    max_digits=8,
+    decimal_places=2,
+    verbose_name=_("Amount Overpaid"),
+    help_text=_(
+      "Amount that was overpaid by the customer, if any"
+    ),
+  )
+  amount_remaining = models.DecimalField(
+    max_digits=8,
+    decimal_places=2,
+    verbose_name=_("Amount Remaining"),
+    help_text=_(
+      "Amount remaining to be paid by the customer, if any"
+    ),
+  )
+  amount_shipping = models.DecimalField(
+    max_digits=8,
+    decimal_places=2,
+    verbose_name=_("Amount Shipping"),
+    help_text=_(
+      "Shipping costs, if any"
+    ),
+  )
+  total_taxes_amount = models.DecimalField(
+    max_digits=8,
+    decimal_places=2,
+    verbose_name=_("Tax"),
+    help_text=_(
+      "Total applicable taxes"
+    ),
+  )
+  total_discounts_amount = models.DecimalField(
+    max_digits=8,
+    decimal_places=2,
+    verbose_name=_("Discount"),
+    help_text=_(
+      "Total discounts"
+    ),
+  )
+  subtotal_excluding_tax = models.DecimalField(
+    max_digits=8,
+    decimal_places=2,
+    verbose_name=_("Subtotal excluding tax"),
+    help_text=_(
+      "Total after item discounts and before taxes"
+    ),
+  )
   subtotal = models.DecimalField(
     max_digits=8,
     decimal_places=2,
@@ -1150,20 +1358,12 @@ class Invoice(StripeModel[stripe.Invoice]):
       "Total before discounts and taxes"
     ),
   )
-  tax = models.DecimalField(
+  total_excluding_tax = models.DecimalField(
     max_digits=8,
     decimal_places=2,
-    verbose_name=_("Tax"),
+    verbose_name=_("Total excluding tax"),
     help_text=_(
-      "Total applicable taxes"
-    ),
-  )
-  discount = models.DecimalField(
-    max_digits=8,
-    decimal_places=2,
-    verbose_name=_("Discount"),
-    help_text=_(
-      "Total discounts"
+      "Total after all discounts and before taxes"
     ),
   )
   total = models.DecimalField(
@@ -1172,14 +1372,6 @@ class Invoice(StripeModel[stripe.Invoice]):
     verbose_name=_("Total"),
     help_text=_(
       "Total after discounts and taxes"
-    ),
-  )
-  amount_due = models.DecimalField(
-    max_digits=8,
-    decimal_places=2,
-    verbose_name=_("Amount Due"),
-    help_text=_(
-      "Final amount due at this time"
     ),
   )
   period_start = models.DateTimeField(
@@ -1218,7 +1410,7 @@ class Invoice(StripeModel[stripe.Invoice]):
 
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Invoice) -> Deserialized:
-    data, post_save, pre_save = super().deserialize(stripe_obj)
+    data, pre_save, post_save = super().deserialize(stripe_obj)
 
     if stripe_obj.parent and stripe_obj.parent.subscription_details:
       stripe_sub = stripe_obj.parent.subscription_details.subscription
@@ -1227,15 +1419,15 @@ class Invoice(StripeModel[stripe.Invoice]):
       elif isinstance(stripe_sub, str):
         data['subscription_id'] = stripe_sub
 
-    data['discount'] = Decimal(0)
+    data['total_discounts_amount'] = Decimal(0)
     for discount in (stripe_obj.total_discount_amounts or []):
-      data['discount'] -= Decimal(discount.amount / 100)
+      data['total_discounts_amount'] -= Decimal(discount.amount / 100)
 
-    data['tax'] = Decimal(0)
+    data['total_taxes_amount'] = Decimal(0)
     for tax in (stripe_obj.total_taxes or []):
-      data['tax'] += Decimal(tax.amount / 100)
+      data['total_taxes_amount'] += Decimal(tax.amount / 100)
 
-    return data, post_save, pre_save
+    return data, pre_save, post_save
 
   @cached_property
   def has_prorations(self) -> bool:

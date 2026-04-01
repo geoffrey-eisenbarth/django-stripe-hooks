@@ -24,13 +24,14 @@ def is_stripe_model(
 
 
 # TODO: Refactor this, too complicated
+# TODO: No need for from_stripe if id already in db!
 class StripeManager(models.Manager[T]):
   def from_stripe(self, stripe_obj: stripe.StripeObject) -> T:
     """Updates or creates a Django instance from a Stripe API object."""
 
     try:
       with transaction.atomic():
-        data, post_save, pre_save = self.model.deserialize(stripe_obj)
+        data, pre_save, post_save = self.model.deserialize(stripe_obj)
         if not data:
           raise ValueError(f"Deserialized data is empty, got {stripe_obj=}")
 
@@ -52,8 +53,8 @@ class StripeManager(models.Manager[T]):
           if isinstance(field, models.ManyToManyField):
             getattr(django_obj, field_name).set(objs)
           elif isinstance(field, models.ManyToOneRel):
-            for related_obj in objs:
-              related_obj.save()
+            for obj in objs:
+              obj.save()
             django_obj.refresh_from_db()
 
       return django_obj
