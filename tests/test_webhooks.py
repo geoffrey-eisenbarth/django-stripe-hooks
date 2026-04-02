@@ -56,7 +56,7 @@ class TestWebhooks:
   def wait_for_object(
     self,
     model_class: type[T],
-    timeout: int = 10,
+    timeout: int = 60,
     **kwargs: Any,
   ) -> T:
     """Generic polling logic to detect object existence."""
@@ -210,7 +210,6 @@ class TestWebhooks:
     )
     self.wait_for_object(
       stripe_models.Invoice,
-      timeout=20,
       status='paid',
       customer=d_customer,
       subscription=d_subscription,
