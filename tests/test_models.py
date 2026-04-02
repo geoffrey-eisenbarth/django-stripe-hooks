@@ -35,6 +35,7 @@ class TestSpecializedModels:
         data[field_name] = dt.datetime.fromtimestamp(value, dt.UTC)
 
     if (pm := s_token.payment_method_preview) is not None:
+      data['payment_method_preview'] = dict(pm)
       if (card := pm.card) is not None:
         data.update({
           'card_brand': card.brand,

@@ -5,12 +5,11 @@ import stripe
 from django.conf import settings
 from django.http import HttpRequest, HttpResponse
 from django.utils.decorators import method_decorator
-from django.utils.functional import cached_property
 from django.views.decorators.csrf import csrf_exempt
 from django.views.generic.base import View
 
-from django_stripe_hooks.models import StripeModel
-from django_stripe_hooks.utils import fetch
+from django_stripe_hooks.models import STRIPE_VERSION, StripeModel
+from django_stripe_hooks.utils import StripeService, fetch
 
 
 DJANGO_MODELS = {
@@ -23,9 +22,10 @@ DJANGO_MODELS = {
 class StripeWebhooks(View):
   """Intercept Stripe webhooks and update local database."""
 
-  @cached_property
-  def stripe_client(self) -> stripe.StripeClient:
-    return stripe.StripeClient(settings.STRIPE_SECRET_KEY)
+  stripe_client = stripe.StripeClient(
+    settings.STRIPE_SECRET_KEY,
+    stripe_version=STRIPE_VERSION,
+  )
 
   @property
   def stripe_name(self) -> str:
@@ -57,10 +57,15 @@ class StripeWebhooks(View):
       )
     else:
       # Fetch the Stripe object, falling back on the event data
-      self.stripe_obj = fetch(
-        service=getattr(self.stripe_client.v1, f'{self.stripe_name}s'),
-        id=self.event.data.object['id'],
-      ) or cast(stripe.StripeObject, self.event.data.object)
+      service = getattr(self.stripe_client.v1, f'{self.stripe_name}s', None)
+      if isinstance(service, StripeService):
+        self.stripe_obj = fetch(
+          service=service,
+          id=self.event.data.object['id'],
+        ) or cast(stripe.StripeObject, self.event.data.object)
+      else:
+        # Fallback on event data if no service exists for this object type
+        self.stripe_obj = cast(stripe.StripeObject, self.event.data.object)
 
       # Convert to Django model instance
       self.django_obj = DjangoModel.objects.from_stripe(self.stripe_obj)

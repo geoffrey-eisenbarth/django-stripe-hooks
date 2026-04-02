@@ -2,7 +2,7 @@ import datetime as dt
 from decimal import Decimal
 from typing import (
   TypeVar, Generic,
-  Any, Self, Tuple, Iterable,
+  Any, Self,
 )
 
 import stripe
@@ -18,17 +18,11 @@ from django_stripe_hooks.managers import StripeManager, is_stripe_model
 
 
 T = TypeVar('T', bound=stripe.StripeObject)
-ObjectFields = dict[str, Any]
-PreSaveFields = dict[str, stripe.StripeObject]
-PostSaveFields = dict[str, Iterable[models.Model]]
 
-Deserialized = Tuple[
-  ObjectFields,
-  PreSaveFields,
-  PostSaveFields,
-]
+Deserialized = dict[str, Any]
 
 
+STRIPE_VERSION = '2026-02-25'
 CURRENCIES = (
   ('', _("N/A")),
   ('usd', _("US Dollars")),
@@ -58,73 +52,92 @@ class StripeModel(models.Model, Generic[T]):
   class Meta:
     abstract = True
 
+  @staticmethod
+  def _stripe_to_dict(obj: Any) -> Any:
+    """Recursively convert stripe.StripeObject to plain Python dicts."""
+    if isinstance(obj, stripe.StripeObject):
+      return {k: StripeModel._stripe_to_dict(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+      return [StripeModel._stripe_to_dict(v) for v in obj]
+    return obj
+
   @classmethod
   def stripe_clean(
     cls,
     field: models.Field[Any, Any] | models.ForeignObjectRel,
     value: Any,
   ) -> Any:
-    """Cleans a value from the Stripe API for a Django model."""
+    """Cleans a scalar value from the Stripe API for a Django field."""
     if isinstance(field, models.CharField):
       if (value is None) and not field.null:
         value = ''
     elif isinstance(field, models.DateTimeField):
-      value = dt.datetime.fromtimestamp(value, tz=dt.timezone.utc)
+      if field.null and (value is None):
+        pass
+      else:
+        value = dt.datetime.fromtimestamp(value, tz=dt.timezone.utc)
     elif isinstance(field, models.IntegerField):
       if (value is None) and not field.null:
         value = 0
     elif isinstance(field, models.DecimalField):
-      try:
+      if value is None:
+        value = None if field.null else Decimal(0)
+      else:
         value = Decimal(value / 100)
-      except TypeError:
-        value = Decimal(0)
     elif isinstance(field, models.JSONField):
-      value = field.default(getattr(value, 'data', value))
-    elif isinstance(field, (models.ForeignKey, models.OneToOneField)):
-      pass  # string IDs and stripe.StripeObjects are routed in deserialize()
-    elif isinstance(field, models.ManyToOneRel):
-      # Related objects can't exist yet, so we just instantiate them
-      # value = getattr(value, 'data', [])
-      RelatedModel = field.related_model
-      if is_stripe_model(RelatedModel):
-        value = list(map(
-          lambda x: RelatedModel(**RelatedModel.deserialize(x)[0]),
-          getattr(value, 'data', []),
-        ))
-    elif isinstance(field, models.ManyToManyField):
-      # Related objects must already exist, get QuerySet of Django objects
-      RelatedModel = field.related_model
-      if is_stripe_model(RelatedModel):
-        value = RelatedModel.objects.filter(
-          id__in=[getattr(v, 'id', v) for v in value]
-        )
+      if value is None:
+        value = None if field.null else field.default()
+      else:
+        value = field.default(getattr(value, 'data', value))
     return value
 
   @classmethod
-  def deserialize(cls, stripe_obj: T) -> Deserialized:
-    """Convert stripe.StripeObject to Django StripeModel field values."""
+  def deserialize(
+    cls,
+    stripe_obj: T,
+  ) -> Deserialized:
+    """Convert a StripeObject (or plain dict) to a nested Django field dict.
 
-    data, pre_save, post_save = {}, {}, {}
+    FK fields with an expanded object produce ``data[field.name] = {...}``.
+    FK fields with only a string ID produce ``data[field.attname] = "id"``.
+    Reverse FK / M2M fields produce ``data[field.name] = [{...}, ...]``.
+    """
+    data: dict[str, Any] = {}
 
     for field in cls._meta.get_fields():
-      if field.name in stripe_obj:
+      if field.name not in stripe_obj:
+        continue
 
-        # Key access avoids method name collisions (items() vs ['items'])
-        value = cls.stripe_clean(field, stripe_obj[field.name])
+      value = stripe_obj[field.name]
 
-        if isinstance(field, (models.ManyToOneRel, models.ManyToManyField)):
-          post_save[field.name] = value
-        elif isinstance(field, (models.ForeignKey, models.OneToOneField)):
-          if isinstance(value, stripe.StripeObject):
-            pre_save[field.name] = value
-          elif isinstance(value, str):
-            data[field.attname] = value
-          else:
-            data[field.name] = value
-        else:
+      if isinstance(field, (models.ForeignKey, models.OneToOneField)):
+        if isinstance(value, stripe.StripeObject):
           data[field.name] = value
+          # RelatedModel = field.related_model
+          # if is_stripe_model(RelatedModel):
+          #   data[field.name] = RelatedModel.deserialize(value)
+          # else:
+          #   data[field.name] = cls._stripe_to_dict(value)
+        elif isinstance(value, str):
+          data[field.attname] = value
 
-    return data, pre_save, post_save
+      elif isinstance(field, models.ManyToOneRel):
+        RelatedModel = field.related_model
+        if is_stripe_model(RelatedModel):
+          items = getattr(value, 'data', value)
+          if isinstance(items, dict):
+            items = items.get('data', [])
+          # data[field.name] = [RelatedModel.deserialize(i) for i in items]
+          data[field.name] = items
+
+      elif isinstance(field, models.ManyToManyField):
+        # data[field.name] = [{'id': getattr(v, 'id', v)} for v in value]
+        data[field.name] = [getattr(v, 'id', v) for v in value]
+
+      else:
+        data[field.name] = cls.stripe_clean(field, value)
+
+    return data
 
 
 class Product(StripeModel[stripe.Product]):
@@ -296,7 +309,7 @@ class Price(StripeModel[stripe.Price]):
 
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Price) -> Deserialized:
-    data, pre_save, post_save = super().deserialize(stripe_obj)
+    data = super().deserialize(stripe_obj)
 
     if (recurring := getattr(stripe_obj, 'recurring', None)) is not None:
       data.update({
@@ -305,7 +318,7 @@ class Price(StripeModel[stripe.Price]):
         'usage_type': recurring.usage_type,
       })
 
-    return data, pre_save, post_save
+    return data
 
 
 class PriceTier(models.Model):
@@ -351,7 +364,7 @@ class PriceTier(models.Model):
 
   @classmethod
   def deserialize(cls, stripe_obj: stripe.StripeObject) -> Deserialized:
-    return dict(stripe_obj), {}, {}
+    return dict(stripe_obj)
 
 
 class Coupon(StripeModel[stripe.Coupon]):
@@ -447,15 +460,12 @@ class Coupon(StripeModel[stripe.Coupon]):
 
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Coupon) -> Deserialized:
-    data, pre_save, post_save = super().deserialize(stripe_obj)
+    data = super().deserialize(stripe_obj)
 
     if (applies_to := getattr(stripe_obj, 'applies_to', None)) is not None:
-      post_save['products'] = cls.stripe_clean(
-        field=Coupon._meta.get_field('products'),
-        value=applies_to.products,
-      )
+      data['products'] = [{'id': pid} for pid in applies_to.products]
 
-    return data, pre_save, post_save
+    return data
 
 
 class PromotionCode(StripeModel[stripe.PromotionCode]):
@@ -525,16 +535,16 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
 
   @classmethod
   def deserialize(cls, stripe_obj: stripe.PromotionCode) -> Deserialized:
-    data, pre_save, post_save = super().deserialize(stripe_obj)
+    data = super().deserialize(stripe_obj)
 
     if stripe_obj.promotion:
       stripe_coupon = stripe_obj.promotion.coupon
       if isinstance(stripe_coupon, stripe.Coupon):
-        pre_save['coupon'] = stripe_coupon
+        data['coupon'] = Coupon.deserialize(stripe_coupon)
       elif isinstance(stripe_coupon, str):
         data['coupon_id'] = stripe_coupon
 
-    return data, pre_save, post_save
+    return data
 
   @property
   def redemptions(self) -> str:
@@ -629,16 +639,16 @@ class Discount(StripeModel[stripe.Discount]):
 
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Discount) -> Deserialized:
-    data, pre_save, post_save = super().deserialize(stripe_obj)
+    data = super().deserialize(stripe_obj)
 
-    if stripe_obj.source:
-      stripe_coupon = stripe_obj.source.coupon
+    if (source := getattr(stripe_obj, 'source', None)) is not None:
+      stripe_coupon = source.coupon
       if isinstance(stripe_coupon, stripe.Coupon):
-        pre_save['coupon'] = stripe_coupon
+        data['coupon'] = Coupon.deserialize(stripe_coupon)
       elif isinstance(stripe_coupon, str):
         data['coupon_id'] = stripe_coupon
 
-    return data, pre_save, post_save
+    return data
 
 
 class Customer(StripeModel[stripe.Customer]):
@@ -676,113 +686,6 @@ class Customer(StripeModel[stripe.Customer]):
     ordering = ['email']
 
 
-class Card(StripeModel[stripe.Card]):
-  """Django implementation of Stripe Cards.
-
-  Notes
-  -----
-  Stripe Docs: https://stripe.com/docs/api/cards
-
-  """
-
-  BRANDS = (
-    ('amex', _("American Express")),
-    ('cartes_bancaires', _("Cartes Bancaires")),
-    ('diners', _("Diners Club")),
-    ('discover', _("Discover")),
-    ('jcb', _("JCB")),
-    ('mastercard', _("MasterCard")),
-    ('visa', _("Visa")),
-    ('unionpay', _("UnionPay")),
-    ('unknown', _("Unknown")),
-  )
-
-  brand = models.CharField(
-    max_length=16,
-    choices=BRANDS,
-    verbose_name=_("Card brand"),
-  )
-  exp_month = models.IntegerField(
-    verbose_name=_("Two-digit card expiration month"),
-  )
-  exp_year = models.IntegerField(
-    verbose_name=_("Four-digit card expiration year"),
-  )
-  last4 = models.CharField(
-    max_length=4,
-    verbose_name=_("Card last four"),
-  )
-  country = models.CharField(
-    max_length=2,
-    verbose_name=_("Card country"),
-    help_text=_(
-      "Two-letter ISO code representing the country of the card"
-    ),
-  )
-  address_city = models.CharField(
-    max_length=255,
-    blank=True,
-    verbose_name=_("Billing address city"),
-  )
-  address_country = models.CharField(
-    max_length=255,
-    blank=True,
-    verbose_name=_("Billing address country"),
-  )
-  address_line1 = models.CharField(
-    max_length=255,
-    blank=True,
-    verbose_name=_("Address line 1"),
-    help_text=_(
-      "Street address/PO Box/Company name"
-    ),
-  )
-  address_line2 = models.CharField(
-    max_length=255,
-    blank=True,
-    verbose_name=_("Address line 2"),
-    help_text=_(
-      "Apartment/Suite/Unit/Building",
-    ),
-  )
-  address_state = models.CharField(
-    max_length=255,
-    blank=True,
-    verbose_name=_("Billing address state"),
-    help_text=_(
-      "State/County/Province/Region"
-    ),
-  )
-  address_zip = models.CharField(
-    max_length=10,
-    blank=True,
-    verbose_name=_("Billing address ZIP code"),
-    help_text=_(
-      "ZIP or postal code"
-    ),
-  )
-  customer = models.ForeignKey(
-    Customer,
-    on_delete=models.CASCADE,
-    related_name='cards',
-    verbose_name=_("Customer"),
-  )
-
-  class Meta(StripeModel.Meta):
-    verbose_name = _("Card")
-    verbose_name_plural = _("Cards")
-    ordering = ['-exp_year', '-exp_month']
-
-  @property
-  def info(self) -> str:
-    s = "{brand} {bullets} {bullets} {bullets} {last4}".format(
-      brand=dict(self.BRANDS)[self.brand],
-      bullets='\u2022' * 4,
-      last4=self.last4,
-    )
-    return s
-
-
 class PaymentMethod(StripeModel[stripe.PaymentMethod]):
   """Django implementation of Stripe PaymentMethods.
 
@@ -813,19 +716,26 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
     ('sepa_debit', _("SEPA Direct Debit (European Union)")),
     ('sofort', _("Sofort (Europe)")),
   )
+  CARD_BRANDS = (
+    ('amex', _("American Express")),
+    ('cartes_bancaires', _("Cartes Bancaires")),
+    ('diners', _("Diners Club")),
+    ('discover', _("Discover")),
+    ('jcb', _("JCB")),
+    ('mastercard', _("MasterCard")),
+    ('visa', _("Visa")),
+    ('unionpay', _("UnionPay")),
+    ('unknown', _("Unknown")),
+  )
 
   type = models.CharField(
     max_length=17,
     choices=TYPES,
     verbose_name=_("Type"),
   )
-  card = models.ForeignKey(
-    Card,
-    on_delete=models.SET_NULL,
-    related_name='payment_methods',
+  card = models.JSONField(
+    default=dict,
     verbose_name=_("Card"),
-    null=True,
-    blank=True,
   )
   customer = models.ForeignKey(
     Customer,
@@ -837,6 +747,18 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
   class Meta(StripeModel.Meta):
     verbose_name = _("Payment Method")
     verbose_name_plural = _("Payment Methods")
+
+  @property
+  def card_info(self) -> str:
+    if self.card:
+      s = "{brand} {bullets} {bullets} {bullets} {last4}".format(
+        brand=dict(self.CARD_BRANDS)[self.card.get('brand', 'unknown')],
+        bullets='\u2022' * 4,
+        last4=self.card.get('last4', '0000'),
+      )
+    else:
+      s = ''
+    return s
 
 
 class PaymentIntent(StripeModel[stripe.PaymentIntent]):
@@ -951,9 +873,14 @@ class ConfirmationToken(models.Model):
   expires_at = models.DateTimeField(
     verbose_name=_("Expires at"),
   )
+  # TODO: JSONField or card_xxx fields?
+  payment_method_preview = models.JSONField(
+    default=dict,
+    verbose_name=_("Payment method preview"),
+  )
   card_brand = models.CharField(
     max_length=16,
-    choices=Card.BRANDS,
+    choices=PaymentMethod.CARD_BRANDS,
     verbose_name=_("Card brand"),
     blank=True,
   )
@@ -997,7 +924,7 @@ class ConfirmationToken(models.Model):
   @property
   def card_info(self) -> str:
     s = "{brand} {bullets} {bullets} {bullets} {last4}".format(
-      brand=dict(Card.BRANDS)[self.card_brand],
+      brand=dict(PaymentMethod.CARD_BRANDS)[self.card_brand],
       bullets='\u2022' * 4,
       last4=self.card_last4,
     )
@@ -1059,7 +986,7 @@ class FundingInstructions(models.Model):
 
   @classmethod
   def deserialize(cls, stripe_obj: stripe.FundingInstructions) -> Deserialized:
-    data = {}
+    data: dict[str, Any] = {}
     for fa in stripe_obj.bank_transfer.financial_addresses:
       if (fa.type == 'aba') and (fa.aba is not None):
         data.update({
@@ -1074,7 +1001,7 @@ class FundingInstructions(models.Model):
       elif (fa.type == 'swift') and (fa.swift is not None):
         data['swift_code'] = fa.swift.swift_code
 
-    return data, {}, {}
+    return data
 
   # TODO:
   @classmethod
@@ -1084,7 +1011,7 @@ class FundingInstructions(models.Model):
     stripe_obj: stripe.FundingInstructions,
   ) -> Self:
     """Returns a Django model instance based on Stripe API object."""
-    data = FundingInstructions.deserialize(stripe_obj)[0]
+    data = FundingInstructions.deserialize(stripe_obj)
     django_obj, created = cls.objects.update_or_create(
       customer=customer,
       defaults=data,
@@ -1230,7 +1157,9 @@ class Invoice(StripeModel[stripe.Invoice]):
 
   API_EXPAND_FIELDS = (
     'customer',
-    'parent.subscription_details.subscription',
+    'discounts',
+    # 'parent.subscription_details.subscription.discounts',
+    'payments.data.payment.payment_intent',
   )
 
   COLLECTION_METHODS = (
@@ -1270,10 +1199,6 @@ class Invoice(StripeModel[stripe.Invoice]):
     max_length=25,
     choices=STATUSES,
     verbose_name=_("Status"),
-  )
-  lines = models.JSONField(
-    default=list,
-    verbose_name=_("Lines"),
   )
   currency = models.CharField(
     max_length=3,
@@ -1404,12 +1329,12 @@ class Invoice(StripeModel[stripe.Invoice]):
 
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Invoice) -> Deserialized:
-    data, pre_save, post_save = super().deserialize(stripe_obj)
+    data = super().deserialize(stripe_obj)
 
     if stripe_obj.parent and stripe_obj.parent.subscription_details:
       stripe_sub = stripe_obj.parent.subscription_details.subscription
       if isinstance(stripe_sub, stripe.Subscription):
-        pre_save['subscription'] = stripe_sub
+        data['subscription'] = Subscription.deserialize(stripe_sub)
       elif isinstance(stripe_sub, str):
         data['subscription_id'] = stripe_sub
 
@@ -1421,18 +1346,179 @@ class Invoice(StripeModel[stripe.Invoice]):
     for tax in (stripe_obj.total_taxes or []):
       data['total_taxes_amount'] += Decimal(tax.amount / 100)
 
-    return data, pre_save, post_save
+    return data
 
   @cached_property
   def has_prorations(self) -> bool:
-    if self.lines:
-      has_prorations = any(
-        line.get('proration', False)
-        for line in self.lines
+    return self.lines.filter(proration=True).exists()
+
+
+class InvoiceLineItem(StripeModel[stripe.StripeObject]):
+  """Django implementation of Stripe Invoice Line Items.
+
+  Notes
+  -----
+
+  Stripe Docs: https://docs.stripe.com/api/invoices/line_item
+
+  """
+
+  invoice = models.ForeignKey(
+    Invoice,
+    on_delete=models.CASCADE,
+    related_name='lines',
+    verbose_name=_("Invoice"),
+  )
+  amount = models.DecimalField(
+    max_digits=8,
+    decimal_places=2,
+    verbose_name=_("Amount"),
+  )
+  currency = models.CharField(
+    max_length=3,
+    choices=CURRENCIES,
+    verbose_name=_("Currency"),
+  )
+  description = models.CharField(
+    max_length=500,
+    blank=True,
+    verbose_name=_("Description"),
+  )
+  quantity = models.PositiveIntegerField(
+    null=True,
+    blank=True,
+    verbose_name=_("Quantity"),
+  )
+  period_start = models.DateTimeField(
+    verbose_name=_("Period start"),
+  )
+  period_end = models.DateTimeField(
+    verbose_name=_("Period end"),
+  )
+  proration = models.BooleanField(
+    default=False,
+    verbose_name=_("Proration?"),
+  )
+  price = models.ForeignKey(
+    Price,
+    on_delete=models.SET_NULL,
+    null=True,
+    blank=True,
+    related_name='invoice_line_items',
+    verbose_name=_("Price"),
+  )
+  product = models.ForeignKey(
+    Product,
+    on_delete=models.SET_NULL,
+    null=True,
+    blank=True,
+    related_name='invoice_line_items',
+    verbose_name=_("Product"),
+  )
+
+  class Meta(StripeModel.Meta):
+    verbose_name = _("Invoice Line Item")
+    verbose_name_plural = _("Invoice Line Items")
+
+  @classmethod
+  def deserialize(cls, stripe_obj: stripe.StripeObject) -> Deserialized:
+    data = super().deserialize(stripe_obj)
+
+    if (period := stripe_obj.get('period')) is not None:
+      data['period_start'] = dt.datetime.fromtimestamp(
+        period['start'], tz=dt.timezone.utc,
       )
-    else:
-      has_prorations = False
-    return has_prorations
+      data['period_end'] = dt.datetime.fromtimestamp(
+        period['end'], tz=dt.timezone.utc,
+      )
+
+    if (pricing := stripe_obj.get('pricing')) is not None:
+      if (price_details := pricing.get('price_details')) is not None:
+        if (price_id := price_details.get('price')) is not None:
+          data['price_id'] = price_id
+        if (product_id := price_details.get('product')) is not None:
+          data['product_id'] = product_id
+
+    return data
+
+
+class InvoicePayment(StripeModel[stripe.StripeObject]):
+  """Django implementation of Stripe Invoice Payments.
+
+  Notes
+  -----
+
+  Stripe Docs: https://docs.stripe.com/api/invoice-payment/object
+
+  """
+
+  STATUSES = (
+    ('open', _("Open")),
+    ('paid', _("Paid")),
+    ('canceled', _("Canceled")),
+  )
+
+  invoice = models.ForeignKey(
+    Invoice,
+    on_delete=models.CASCADE,
+    related_name='payments',
+    verbose_name=_("Invoice"),
+  )
+  amount_paid = models.DecimalField(
+    max_digits=8,
+    decimal_places=2,
+    null=True,
+    blank=True,
+    verbose_name=_("Amount paid"),
+    help_text=_("Null until the payment is paid"),
+  )
+  amount_requested = models.DecimalField(
+    max_digits=8,
+    decimal_places=2,
+    verbose_name=_("Amount requested"),
+  )
+  is_default = models.BooleanField(
+    verbose_name=_("Default?"),
+  )
+  status = models.CharField(
+    max_length=10,
+    choices=STATUSES,
+    verbose_name=_("Status"),
+  )
+  created = models.DateTimeField(
+    verbose_name=_("Created"),
+  )
+  currency = models.CharField(
+    max_length=3,
+    choices=CURRENCIES,
+    verbose_name=_("Currency"),
+  )
+  payment_intent = models.ForeignKey(
+    PaymentIntent,
+    on_delete=models.SET_NULL,
+    null=True,
+    blank=True,
+    related_name='invoice_payments',
+    verbose_name=_("Payment intent"),
+  )
+
+  class Meta(StripeModel.Meta):
+    verbose_name = _("Invoice Payment")
+    verbose_name_plural = _("Invoice Payments")
+
+  @classmethod
+  def deserialize(cls, stripe_obj: stripe.StripeObject) -> Deserialized:
+    data = super().deserialize(stripe_obj)
+
+    if (payment := stripe_obj.get('payment')) is not None:
+      if payment.get('type') == 'payment_intent':
+        pi = payment.get('payment_intent')
+        if isinstance(pi, stripe.PaymentIntent):
+          data['payment_intent'] = PaymentIntent.deserialize(pi)
+        elif isinstance(pi, str):
+          data['payment_intent_id'] = pi
+
+    return data
 
 
 class BalanceTransaction(StripeModel[stripe.BalanceTransaction]):
@@ -1545,7 +1631,11 @@ class Charge(StripeModel[stripe.Charge]):
 
   """
 
-  API_EXPAND_FIELDS = ('customer', 'payment_intent', 'balance_transaction')
+  API_EXPAND_FIELDS = (
+    'customer',
+    'payment_intent',
+    'balance_transaction',
+  )
 
   STATUSES = (
     ('succeeded', _("Succeeded")),
@@ -1632,7 +1722,10 @@ class Refund(StripeModel[stripe.Refund]):
 
   """
 
-  API_EXPAND_FIELDS = ('charge.balance_transaction', 'balance_transaction')
+  API_EXPAND_FIELDS = (
+    'charge.balance_transaction',
+    'balance_transaction',
+  )
 
   REASONS = (
     ('duplicate', _("Duplicate charge")),
