@@ -20,9 +20,6 @@ from django_stripe_hooks.managers import StripeManager, is_stripe_model
 T = TypeVar('T', bound=stripe.StripeObject)
 
 Deserialized = dict[str, Any]
-
-
-STRIPE_VERSION = '2026-02-25'
 CURRENCIES = (
   ('', _("N/A")),
   ('usd', _("US Dollars")),
