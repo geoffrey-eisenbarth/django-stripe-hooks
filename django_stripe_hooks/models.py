@@ -461,7 +461,7 @@ class Coupon(StripeModel[stripe.Coupon]):
     data = super().deserialize(stripe_obj)
 
     if (applies_to := getattr(stripe_obj, 'applies_to', None)) is not None:
-      data['products'] = [{'id': pid} for pid in applies_to.products]
+      data['products'] = list(applies_to.products)
 
     return data
 
