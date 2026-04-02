@@ -130,6 +130,7 @@ class TestWebhooks:
     d_price = self.wait_for_object(
       stripe_models.Price,
       id=s_price.id,
+      product=d_product,
     )
 
     s_coupon = self.stripe_client.v1.coupons.create(params={
@@ -141,6 +142,7 @@ class TestWebhooks:
     d_coupon = self.wait_for_object(
       stripe_models.Coupon,
       id=s_coupon.id,
+      products=d_product,
     )
 
     s_promo = self.stripe_client.v1.promotion_codes.create(params={
@@ -150,9 +152,10 @@ class TestWebhooks:
       },
       'code': f'PROMO_{uuid.uuid4().hex[:8].upper()}'
     })
-    d_promo = self.wait_for_object(
+    self.wait_for_object(
       stripe_models.PromotionCode,
       id=s_promo.id,
+      coupon=d_coupon,
     )
 
     # Billing primatives
@@ -175,7 +178,8 @@ class TestWebhooks:
     )
     d_payment_method = self.wait_for_object(
       stripe_models.PaymentMethod,
-      id=s_payment_method.id
+      id=s_payment_method.id,
+      customer=d_customer,
     )
 
     s_subscription = self.stripe_client.v1.subscriptions.create(params={
@@ -189,30 +193,33 @@ class TestWebhooks:
 
     d_payment_intent = self.wait_for_object(
       stripe_models.PaymentIntent,
-      customer_id=s_customer.id,
-      payment_method_id=s_payment_method.id,
+      customer=d_customer,
+      payment_method=d_payment_method,
     )
 
     # Confirm PaymentIntent, verify Invoice and Subscription updated
     s_payment_intent = self.stripe_client.v1.payment_intents.confirm(
       d_payment_intent.id,
     )
-    self.wait_for_object(
-      stripe_models.Invoice,
-      timeout=20,
-      customer_id=s_customer.id,
-      subscription_id=s_subscription.id,
-      status='paid',
-    )
     d_subscription = self.wait_for_object(
       stripe_models.Subscription,
       id=s_subscription.id,
       status='active',
+      customer=d_customer,
+      default_payment_method=d_payment_method,
+    )
+    self.wait_for_object(
+      stripe_models.Invoice,
+      timeout=20,
+      status='paid',
+      customer=d_customer,
+      subscription=d_subscription,
     )
 
     # Refund the charge
     d_charge = self.wait_for_object(
       stripe_models.Charge,
+      customer=d_customer,
       payment_intent_id=s_payment_intent.id,
     )
     s_refund = self.stripe_client.v1.refunds.create(params={
@@ -220,26 +227,20 @@ class TestWebhooks:
       'payment_intent': s_payment_intent.id,
       'reason': 'requested_by_customer',
     })
-    self.wait_for_object(
+    d_balance_txn = self.wait_for_object(
       stripe_models.BalanceTransaction,
       refunds=s_refund.id,
     )
     self.wait_for_object(
       stripe_models.Refund,
       id=s_refund.id,
-      charge_id=d_charge.id,
+      charge=d_charge,
+      balance_transaction=d_balance_txn,
     )
 
-    # Test ForeignKey relations
-    assert d_price.product.id == d_product.id
-    assert d_promo.coupon.id == d_coupon.id
-    assert d_payment_method.customer.id == d_customer.id
-
-    # Test ManyToMany relations
+    # Test ManyToMany and ReverseForeignKey relations
     d_coupon.refresh_from_db()
     assert d_coupon.products.exists()
-
-    # Test ReverseForeignKey relations
     d_subscription.refresh_from_db()
     assert d_subscription.items.exists()
 
