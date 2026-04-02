@@ -236,6 +236,7 @@ class TestWebhooks:
     assert d_payment_method.customer.id == d_customer.id
 
     # Test ManyToMany relations
+    d_coupon.refresh_from_db()
     assert d_coupon.products.exists()
 
     # Test ReverseForeignKey relations
