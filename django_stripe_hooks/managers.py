@@ -10,6 +10,14 @@ if TYPE_CHECKING:
 
 
 T = TypeVar('T', bound='StripeModel[stripe.StripeObject]')
+PreSave = dict[
+  models.ForeignKey[Any, Any] | models.OneToOneField[Any, Any],
+  stripe.StripeObject
+]
+PostSave = dict[
+  models.ManyToOneRel | models.ManyToManyField[Any, Any],
+  list[str | stripe.StripeObject]
+]
 
 
 def is_stripe_model(
@@ -39,45 +47,47 @@ class StripeManager(models.Manager[T]):
     has a valid ID. Post-save relations are handled after the parent is
     upserted.
     """
+    data = self.model.deserialize(stripe_obj)
+    if not data:
+      raise ValueError(f"Deserialized data is empty, got {stripe_obj=}")
+
+    pre_save: PreSave = {}
+    post_save: PostSave = {}
+
+    for field in self.model._meta.get_fields():
+      if isinstance(field, (models.ForeignKey, models.OneToOneField)):
+        if field.name in data and isinstance(data[field.name], stripe.StripeObject):  # noqa: E501
+          pre_save[field] = data.pop(field.name)
+      elif isinstance(field, (models.ManyToOneRel, models.ManyToManyField)):
+        if field.name in data:
+          post_save[field] = data.pop(field.name)
+
+    # Resolve pre-save FKs outside the parent's transaction
+    for field, related_stripe_obj in pre_save.items():
+      if is_stripe_model(field.related_model):
+        assert is_stripe_model(field.related_model)
+        related_obj = field.related_model.objects.from_stripe(related_stripe_obj)  # noqa: E501
+        data[field.attname] = related_obj.id
+
     with transaction.atomic():
-      data = self.model.deserialize(stripe_obj)
-      if not data:
-        raise ValueError(f"Deserialized data is empty, got {stripe_obj=}")
-
-      pre_save: dict[str, stripe.StripeObject] = {}
-      post_save: dict[str, list[stripe.StripeObject]] = {}
-
-      for field in self.model._meta.get_fields():
-        if isinstance(field, (models.ForeignKey, models.OneToOneField)):
-          if field.name in data and isinstance(data[field.name], dict):
-            pre_save[field.name] = data.pop(field.name)
-        elif isinstance(field, (models.ManyToOneRel, models.ManyToManyField)):
-          if field.name in data:
-            post_save[field.name] = data.pop(field.name)
-
-      for field_name, related_stripe_obj in pre_save.items():
-        field = self.model._meta.get_field(field_name)
-        if is_stripe_model(field.related_model):
-          related_obj = field.related_model.objects.from_stripe(related_stripe_obj)  # noqa: E501
-          data[field_name] = related_obj
-
       django_obj, created = self.update_or_create(
         id=data.pop('id'),
         defaults=data,
       )
 
-      for field_name, related_stripe_objs in post_save.items():
-        field = self.model._meta.get_field(field_name)
-        if not is_stripe_model(field.related_model):
-          continue
-
+      for field, related_stripe_objs in post_save.items():
+        assert is_stripe_model(field.related_model)
         if isinstance(field, models.ManyToManyField):
-          ids = [d['id'] for d in related_stripe_objs]
-          getattr(django_obj, field_name).set(
-            field.related_model.objects.filter(id__in=ids)
+          getattr(django_obj, field.name).set(
+            field.related_model.objects.filter(id__in=related_stripe_objs)
           )
         elif isinstance(field, models.ManyToOneRel):
-          for related_stripe_obj in related_stripe_objs:
+          for id_or_related_stripe_obj in related_stripe_objs:
+            if isinstance(id_or_related_stripe_obj, str):
+              # Only a bare ID — no object data to deserialize. The related
+              # object's own webhook will set the FK back to this object.
+              continue
+            related_stripe_obj = id_or_related_stripe_obj
             if getattr(related_stripe_obj, field.field.name) != stripe_obj['id']:  # noqa: E501
               setattr(related_stripe_obj, field.field.name, stripe_obj['id'])
             related_obj = field.related_model.objects.from_stripe(related_stripe_obj)  # noqa: E501

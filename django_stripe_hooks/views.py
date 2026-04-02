@@ -3,7 +3,6 @@ from typing import Any, cast
 import stripe
 
 from django.conf import settings
-from django.db import IntegrityError
 from django.http import HttpRequest, HttpResponse
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
@@ -66,18 +65,11 @@ class StripeWebhooks(View):
         self.stripe_obj = cast(stripe.StripeObject, self.event.data.object)
 
       # Convert to Django model instance
-      try:
-        self.django_obj = DjangoModel.objects.from_stripe(self.stripe_obj)
-      except IntegrityError:
-        response = HttpResponse(
-          "[django-stripe-hooks] ForeignKey dependency missing, will retry.",
-          status=409,
-        )
-      else:
-        response = HttpResponse(
-          "[django-stripe-hooks] Success!",
-          status=200,
-        )
+      self.django_obj = DjangoModel.objects.from_stripe(self.stripe_obj)
+      response = HttpResponse(
+        "[django-stripe-hooks] Success!",
+        status=200,
+      )
 
     finally:
       # Allow authors to hook in

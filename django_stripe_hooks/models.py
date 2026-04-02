@@ -128,7 +128,6 @@ class StripeModel(models.Model, Generic[T]):
           data[field.name] = items
 
       elif isinstance(field, models.ManyToManyField):
-        # data[field.name] = [{'id': getattr(v, 'id', v)} for v in value]
         data[field.name] = [getattr(v, 'id', v) for v in value]
 
       else:
@@ -296,6 +295,7 @@ class Price(StripeModel[stripe.Price]):
   product = models.ForeignKey(
     Product,
     on_delete=models.PROTECT,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='prices',
     verbose_name=_("Product"),
   )
@@ -355,6 +355,7 @@ class PriceTier(models.Model):
   price = models.ForeignKey(
     Price,
     on_delete=models.CASCADE,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='tiers',
     verbose_name=_("Price"),
   )
@@ -515,12 +516,14 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
   coupon = models.ForeignKey(
     Coupon,
     on_delete=models.PROTECT,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='promotion_codes',
     verbose_name=_("Coupon"),
   )
   customer = models.ForeignKey(
     'Customer',
     on_delete=models.SET_NULL,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     null=True,
     blank=True,
     verbose_name=_("Customer"),
@@ -537,7 +540,7 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
     if stripe_obj.promotion:
       stripe_coupon = stripe_obj.promotion.coupon
       if isinstance(stripe_coupon, stripe.Coupon):
-        data['coupon'] = Coupon.deserialize(stripe_coupon)
+        data['coupon'] = stripe_coupon
       elif isinstance(stripe_coupon, str):
         data['coupon_id'] = stripe_coupon
 
@@ -577,9 +580,16 @@ class Discount(StripeModel[stripe.Discount]):
 
   """
 
+  API_EXPAND_FIELDS = (
+    'customer',
+    'promotion_code',
+    'source.coupon',
+  )
+
   customer = models.ForeignKey(
     'Customer',
     on_delete=models.SET_NULL,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='discounts',
     verbose_name=_("Customer"),
     null=True,
@@ -588,6 +598,7 @@ class Discount(StripeModel[stripe.Discount]):
   subscription = models.ForeignKey(
     'Subscription',
     on_delete=models.SET_NULL,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='discounts',
     verbose_name=_("Subscription"),
     null=True,
@@ -596,6 +607,7 @@ class Discount(StripeModel[stripe.Discount]):
   subscription_item = models.ForeignKey(
     'SubscriptionItem',
     on_delete=models.SET_NULL,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='discounts',
     verbose_name=_("Subscription items"),
     null=True,
@@ -604,6 +616,7 @@ class Discount(StripeModel[stripe.Discount]):
   invoice = models.ForeignKey(
     'Invoice',
     on_delete=models.SET_NULL,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='discounts',
     null=True,
     blank=True,
@@ -611,6 +624,7 @@ class Discount(StripeModel[stripe.Discount]):
   promotion_code = models.ForeignKey(
     PromotionCode,
     on_delete=models.PROTECT,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='discounts',
     null=True,
     blank=True,
@@ -618,6 +632,7 @@ class Discount(StripeModel[stripe.Discount]):
   coupon = models.ForeignKey(
     Coupon,
     on_delete=models.PROTECT,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='discounts',
     verbose_name=_("Coupon"),
   )
@@ -641,7 +656,7 @@ class Discount(StripeModel[stripe.Discount]):
     if (source := getattr(stripe_obj, 'source', None)) is not None:
       stripe_coupon = source.coupon
       if isinstance(stripe_coupon, stripe.Coupon):
-        data['coupon'] = Coupon.deserialize(stripe_coupon)
+        data['coupon'] = stripe_coupon
       elif isinstance(stripe_coupon, str):
         data['coupon_id'] = stripe_coupon
 
@@ -737,6 +752,7 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
   customer = models.ForeignKey(
     Customer,
     on_delete=models.CASCADE,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='payment_methods',
     verbose_name=_("Customer"),
   )
@@ -817,6 +833,7 @@ class PaymentIntent(StripeModel[stripe.PaymentIntent]):
   customer = models.ForeignKey(
     Customer,
     on_delete=models.CASCADE,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='payment_intents',
     verbose_name=_("Customer"),
   )
@@ -826,6 +843,7 @@ class PaymentIntent(StripeModel[stripe.PaymentIntent]):
   payment_method = models.ForeignKey(
     PaymentMethod,
     on_delete=models.SET_NULL,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='payment_intents',
     blank=True,
     null=True,
@@ -904,6 +922,7 @@ class ConfirmationToken(models.Model):
   customer = models.ForeignKey(
     Customer,
     on_delete=models.CASCADE,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='confirmation_tokens',
     verbose_name=_("Customer"),
   )
@@ -941,6 +960,7 @@ class FundingInstructions(models.Model):
   customer = models.OneToOneField(
     Customer,
     on_delete=models.CASCADE,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='funding_instructions',
     verbose_name=_("Customer"),
   )
@@ -1065,12 +1085,14 @@ class Subscription(StripeModel[stripe.Subscription]):
   customer = models.ForeignKey(
     Customer,
     on_delete=models.PROTECT,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='subscriptions',
     verbose_name=_("Customer"),
   )
   default_payment_method = models.ForeignKey(
     PaymentMethod,
     on_delete=models.PROTECT,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='subscriptions',
     blank=True,
     null=True,
@@ -1111,6 +1133,7 @@ class SubscriptionItem(StripeModel[stripe.SubscriptionItem]):
   price = models.ForeignKey(
     Price,
     on_delete=models.PROTECT,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='subscription_items',
     verbose_name=_("Price"),
   )
@@ -1126,6 +1149,7 @@ class SubscriptionItem(StripeModel[stripe.SubscriptionItem]):
   subscription = models.ForeignKey(
     Subscription,
     on_delete=models.CASCADE,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='items',
     verbose_name=_("Subscription"),
   )
@@ -1155,7 +1179,7 @@ class Invoice(StripeModel[stripe.Invoice]):
   API_EXPAND_FIELDS = (
     'customer',
     'discounts',
-    # 'parent.subscription_details.subscription.discounts',
+    'parent.subscription_details.subscription.discounts',
     'payments.data.payment.payment_intent',
   )
 
@@ -1307,12 +1331,14 @@ class Invoice(StripeModel[stripe.Invoice]):
   customer = models.ForeignKey(
     Customer,
     on_delete=models.PROTECT,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='invoices',
     verbose_name=_("Customer"),
   )
   subscription = models.ForeignKey(
     Subscription,
     on_delete=models.SET_NULL,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='invoices',
     blank=True,
     null=True,
@@ -1331,7 +1357,7 @@ class Invoice(StripeModel[stripe.Invoice]):
     if stripe_obj.parent and stripe_obj.parent.subscription_details:
       stripe_sub = stripe_obj.parent.subscription_details.subscription
       if isinstance(stripe_sub, stripe.Subscription):
-        data['subscription'] = Subscription.deserialize(stripe_sub)
+        data['subscription'] = stripe_sub
       elif isinstance(stripe_sub, str):
         data['subscription_id'] = stripe_sub
 
@@ -1363,6 +1389,7 @@ class InvoiceLineItem(StripeModel[stripe.StripeObject]):
   invoice = models.ForeignKey(
     Invoice,
     on_delete=models.CASCADE,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='lines',
     verbose_name=_("Invoice"),
   )
@@ -1399,6 +1426,7 @@ class InvoiceLineItem(StripeModel[stripe.StripeObject]):
   price = models.ForeignKey(
     Price,
     on_delete=models.SET_NULL,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     null=True,
     blank=True,
     related_name='invoice_line_items',
@@ -1407,6 +1435,7 @@ class InvoiceLineItem(StripeModel[stripe.StripeObject]):
   product = models.ForeignKey(
     Product,
     on_delete=models.SET_NULL,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     null=True,
     blank=True,
     related_name='invoice_line_items',
@@ -1449,6 +1478,11 @@ class InvoicePayment(StripeModel[stripe.StripeObject]):
 
   """
 
+  API_EXPAND_FIELDS = (
+    'invoice',
+    'payment.payment_intent',
+  )
+
   STATUSES = (
     ('open', _("Open")),
     ('paid', _("Paid")),
@@ -1458,6 +1492,7 @@ class InvoicePayment(StripeModel[stripe.StripeObject]):
   invoice = models.ForeignKey(
     Invoice,
     on_delete=models.CASCADE,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='payments',
     verbose_name=_("Invoice"),
   )
@@ -1493,6 +1528,7 @@ class InvoicePayment(StripeModel[stripe.StripeObject]):
   payment_intent = models.ForeignKey(
     PaymentIntent,
     on_delete=models.SET_NULL,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     null=True,
     blank=True,
     related_name='invoice_payments',
@@ -1511,7 +1547,7 @@ class InvoicePayment(StripeModel[stripe.StripeObject]):
       if payment.get('type') == 'payment_intent':
         pi = payment.get('payment_intent')
         if isinstance(pi, stripe.PaymentIntent):
-          data['payment_intent'] = PaymentIntent.deserialize(pi)
+          data['payment_intent'] = pi
         elif isinstance(pi, str):
           data['payment_intent_id'] = pi
 
@@ -1681,12 +1717,14 @@ class Charge(StripeModel[stripe.Charge]):
   customer = models.ForeignKey(
     Customer,
     on_delete=models.PROTECT,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='charges',
     verbose_name=_("Customer"),
   )
   payment_intent = models.ForeignKey(
     PaymentIntent,
     on_delete=models.SET_NULL,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='charges',
     verbose_name=_("Payment intent"),
     blank=True,
@@ -1695,6 +1733,7 @@ class Charge(StripeModel[stripe.Charge]):
   balance_transaction = models.ForeignKey(
     BalanceTransaction,
     on_delete=models.PROTECT,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='charges',
     verbose_name=_("Balance transaction"),
   )
@@ -1764,6 +1803,7 @@ class Refund(StripeModel[stripe.Refund]):
   charge = models.ForeignKey(
     Charge,
     on_delete=models.CASCADE,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='refunds',
     verbose_name=_("Charge"),
     help_text=_(
@@ -1773,6 +1813,7 @@ class Refund(StripeModel[stripe.Refund]):
   balance_transaction = models.ForeignKey(
     BalanceTransaction,
     on_delete=models.SET_NULL,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='refunds',
     blank=True,
     null=True,

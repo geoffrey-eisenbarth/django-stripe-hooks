@@ -5,14 +5,16 @@ from typing import TypeVar, Any, Generator
 import stripe
 import pytest
 
+from django.apps import apps
 from django.conf import settings
 from django.core.handlers.wsgi import WSGIHandler
 from django.core.signals import got_request_exception
+from django.db import models as models
 from django.http import HttpRequest
 
 from django_stripe_hooks import models as stripe_models
+from django_stripe_hooks.managers import is_stripe_model
 from pytest_django.live_server_helper import LiveServer
-
 
 T = TypeVar('T', bound='stripe_models.StripeModel[Any]')
 
@@ -66,6 +68,32 @@ class TestWebhooks:
     pytest.fail(
       f'Timed out waiting for create on {model_class.__name__} with {kwargs=}'
     )
+
+  def assert_fk_integrity(self) -> None:
+    """Verify no dangling FK references across all synced models.
+
+    Since db_constraint=False is used throughout (Stripe webhooks may arrive
+    out of order), this check compensates by asserting that all FK IDs stored
+    in the DB resolve to an existing object by the end of the test.
+    """
+    broken = []
+    for cls in apps.get_app_config('django_stripe_hooks').get_models():
+      if not is_stripe_model(cls):
+        continue
+      for obj in cls.objects.all():
+        for field in obj._meta.get_fields():
+          if not isinstance(field, (models.ForeignKey, models.OneToOneField)):
+            continue
+          if (fk_id := getattr(obj, field.attname)) is None:
+            continue
+          assert is_stripe_model(field.related_model)
+          if not field.related_model.objects.filter(id=fk_id).exists():
+            broken.append(
+              f"{cls.__name__}({obj.id}).{field.name}_id="
+              f"{fk_id} → {field.related_model.__name__} missing"
+            )
+
+    assert not broken, "Dangling FK references:\n" + "\n".join(broken)
 
   def test_crud(self, live_server: LiveServer) -> None:
     """Integration testing for Product and Billing primatives.
@@ -253,3 +281,6 @@ class TestWebhooks:
       id=s_subscription.id,
       status='canceled',
     )
+
+    time.sleep(10)  # Wait for any delayed webhooks to arrive and be processed
+    self.assert_fk_integrity()
