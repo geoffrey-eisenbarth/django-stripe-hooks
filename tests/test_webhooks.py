@@ -36,8 +36,14 @@ class TestWebhooks:
       request: HttpRequest,
       **kwargs: Any,
     ) -> None:
-      # Capture the actual exception object for the error message
-      exceptions.append(kwargs.get('exception') or kwargs.get('exc_info'))
+      # Capture the actual exception object for the error message.
+      exc = kwargs.get('exception')
+      if exc is None:
+        exc_info = kwargs.get('exc_info')
+        if exc_info:
+          exc = exc_info[1]  # (type, value, traceback) → value
+      if exc is not None:
+        exceptions.append(exc)
 
     # Connect the signal before the test starts
     got_request_exception.connect(signal_handler)
@@ -284,5 +290,5 @@ class TestWebhooks:
       status='canceled',
     )
 
-    time.sleep(10)  # Wait for any delayed webhooks to arrive and be processed
+    time.sleep(30)  # Wait for any delayed webhooks to arrive and be processed
     self.assert_fk_integrity()
