@@ -1,5 +1,6 @@
 from decimal import Decimal
 import time
+import uuid
 from typing import TypeVar, Any, Generator
 
 import stripe
@@ -108,7 +109,7 @@ class TestWebhooks:
 
     # Product primatives
     s_product = self.stripe_client.v1.products.create(params={
-      'name': f'Test Product {time.time()}',
+      'name': f'Test Product {uuid.uuid4().hex[:8]}',
       'description': 'Description for test product',
       'statement_descriptor': 'STATEMENT',
       'metadata': {'category': 'Test Product'},
@@ -132,7 +133,7 @@ class TestWebhooks:
     )
 
     s_coupon = self.stripe_client.v1.coupons.create(params={
-      'name': f'Test Coupon {time.time()}',
+      'name': f'Test Coupon {uuid.uuid4().hex[:8]}',
       'percent_off': 20,
       'duration': 'once',
       'applies_to': {'products': [s_product.id]},
@@ -147,7 +148,7 @@ class TestWebhooks:
         'type': 'coupon',
         'coupon': s_coupon.id,
       },
-      'code': f'PROMO_{int(time.time())}'
+      'code': f'PROMO_{uuid.uuid4().hex[:8].upper()}'
     })
     d_promo = self.wait_for_object(
       stripe_models.PromotionCode,
@@ -246,7 +247,7 @@ class TestWebhooks:
 
     # Test deletion webhooks and soft deletes
     s_product = self.stripe_client.v1.products.create(params={
-      'name': f'Delete Product {time.time()}',
+      'name': f'Delete Product {uuid.uuid4().hex[:8]}',
       'description': 'Description for deleted product',
       'statement_descriptor': 'STATEMENT',
       'metadata': {'category': 'Test Product'},
