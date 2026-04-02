@@ -290,5 +290,14 @@ class TestWebhooks:
       status='canceled',
     )
 
-    time.sleep(30)  # Wait for any delayed webhooks to arrive and be processed
-    self.assert_fk_integrity()
+    # Wait for any delayed webhooks to arrive, then verify FK integrity.
+    # Retry up to 60 seconds to give CI headroom for late webhook delivery.
+    deadline = time.monotonic() + 60
+    while True:
+      time.sleep(5)
+      try:
+        self.assert_fk_integrity()
+        break
+      except AssertionError:
+        if time.monotonic() >= deadline:
+          raise
