@@ -30,6 +30,7 @@ class StripeModel(models.Model, Generic[T]):
   """Common Stripe model methods and properties."""
 
   API_EXPAND_FIELDS: tuple[str, ...] = ()
+  WEBHOOK_EVENTS: tuple[str, ...] = ()
 
   id = models.CharField(
     max_length=255,
@@ -146,6 +147,12 @@ class Product(StripeModel[stripe.Product]):
 
   """
 
+  WEBHOOK_EVENTS = (
+    'product.created',
+    'product.deleted',
+    'product.updated',
+  )
+
   active = models.BooleanField(
     verbose_name=_("Active?"),
   )
@@ -192,6 +199,11 @@ class Price(StripeModel[stripe.Price]):
   """
 
   API_EXPAND_FIELDS = ('product',)
+  WEBHOOK_EVENTS = (
+    'price.created',
+    'price.deleted',
+    'price.updated',
+  )
 
   TYPES = (
     ('recurring', _("Recurring charge")),
@@ -376,6 +388,11 @@ class Coupon(StripeModel[stripe.Coupon]):
   """
 
   API_EXPAND_FIELDS = ('applies_to',)
+  WEBHOOK_EVENTS = (
+    'coupon.created',
+    'coupon.deleted',
+    'coupon.updated',
+  )
 
   DURATIONS = (
     ('once', _("Once")),
@@ -477,6 +494,10 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
   """
 
   API_EXPAND_FIELDS = ('promotion.coupon',)
+  WEBHOOK_EVENTS = (
+    'promotion_code.created',
+    'promotion_code.updated',
+  )
 
   active = models.BooleanField(
     verbose_name=_("Active?")
@@ -585,6 +606,11 @@ class Discount(StripeModel[stripe.Discount]):
     'promotion_code',
     'source.coupon',
   )
+  WEBHOOK_EVENTS = (
+    'customer.discount.created',
+    'customer.discount.deleted',
+    'customer.discount.updated',
+  )
 
   customer = models.ForeignKey(
     'Customer',
@@ -673,6 +699,12 @@ class Customer(StripeModel[stripe.Customer]):
 
   """
 
+  WEBHOOK_EVENTS = (
+    'customer.created',
+    'customer.deleted',
+    'customer.updated',
+  )
+
   email = models.EmailField(
     db_index=True,
     verbose_name=_("Email address"),
@@ -709,6 +741,12 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
   """
 
   API_EXPAND_FIELDS = ('customer',)
+  WEBHOOK_EVENTS = (
+    'payment_method.attached',
+    'payment_method.automatically_updated',
+    'payment_method.detached',
+    'payment_method.updated',
+  )
 
   TYPES = (
     ('card', _("Credit/Debit Card")),
@@ -785,6 +823,16 @@ class PaymentIntent(StripeModel[stripe.PaymentIntent]):
   """
 
   API_EXPAND_FIELDS = ('customer', 'payment_method')
+  WEBHOOK_EVENTS = (
+    'payment_intent.amount_capturable_updated',
+    'payment_intent.canceled',
+    'payment_intent.created',
+    'payment_intent.partially_funded',
+    'payment_intent.payment_failed',
+    'payment_intent.processing',
+    'payment_intent.requires_action',
+    'payment_intent.succeeded',
+  )
 
   FUTURE_USAGES = (
     ('on_session', _("On Session")),
@@ -1051,6 +1099,16 @@ class Subscription(StripeModel[stripe.Subscription]):
     'discounts.promotion_code.coupon',
     'default_payment_method.customer',
   )
+  WEBHOOK_EVENTS = (
+    'customer.subscription.created',
+    'customer.subscription.deleted',
+    'customer.subscription.paused',
+    'customer.subscription.pending_update_applied',
+    'customer.subscription.pending_update_expired',
+    'customer.subscription.resumed',
+    'customer.subscription.trial_will_end',
+    'customer.subscription.updated',
+  )
 
   STATUSES = (
     ('incomplete', _("Incomplete")),
@@ -1181,6 +1239,22 @@ class Invoice(StripeModel[stripe.Invoice]):
     'discounts',
     'parent.subscription_details.subscription.discounts',
     'payments.data.payment.payment_intent',
+  )
+  WEBHOOK_EVENTS = (
+    'invoice.created',
+    'invoice.deleted',
+    'invoice.finalization_failed',
+    'invoice.finalized',
+    'invoice.marked_uncollectible',
+    'invoice.overdue',
+    'invoice.paid',
+    'invoice.payment_action_required',
+    'invoice.payment_failed',
+    'invoice.payment_succeeded',
+    'invoice.sent',
+    'invoice.updated',
+    'invoice.voided',
+    'invoice.will_be_due',
   )
 
   COLLECTION_METHODS = (
@@ -1669,6 +1743,15 @@ class Charge(StripeModel[stripe.Charge]):
     'payment_intent',
     'balance_transaction',
   )
+  WEBHOOK_EVENTS = (
+    'charge.captured',
+    'charge.expired',
+    'charge.failed',
+    'charge.pending',
+    'charge.refunded',
+    'charge.succeeded',
+    'charge.updated',
+  )
 
   STATUSES = (
     ('succeeded', _("Succeeded")),
@@ -1761,6 +1844,11 @@ class Refund(StripeModel[stripe.Refund]):
   API_EXPAND_FIELDS = (
     'charge.balance_transaction',
     'balance_transaction',
+  )
+  WEBHOOK_EVENTS = (
+    'refund.created',
+    'refund.failed',
+    'refund.updated',
   )
 
   REASONS = (
