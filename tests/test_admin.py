@@ -1,4 +1,5 @@
 import datetime as dt
+from decimal import Decimal
 
 from django.contrib import admin
 from django.db import models
@@ -10,13 +11,9 @@ from django.contrib.auth import get_user_model
 from django_stripe_hooks.admin import InvoiceInline
 from django_stripe_hooks.managers import allow_stripe_write
 from django_stripe_hooks.models import (
-  StripeModel,
-  Product, Price,
-  Coupon, PromotionCode,
-  Customer,
-  BalanceTransaction, Charge, Refund,
-  Invoice,
-  Subscription, SubscriptionItem,
+  StripeModel, Product, Price, Coupon, PromotionCode,
+  Customer, BalanceTransaction, Charge, Refund,
+  Invoice, Subscription, SubscriptionItem,
 )
 
 
@@ -63,13 +60,36 @@ class StripeAdminTest(TestCase):
         duration='once',
         valid=True,
       )
+      coupon_amount = Coupon.objects.create(
+        id='coup_amount',
+        name='Amount Coupon',
+        currency='usd',
+        percent_off=0,
+        amount_off=Decimal('5.00'),
+        duration='once',
+        valid=True,
+      )
       PromotionCode.objects.create(
         id='promo_test',
         active=True,
         code='TESTCODE',
         coupon=coupon,
       )
-      customer = Customer.objects.create(
+      PromotionCode.objects.create(
+        id='promo_amount',
+        active=True,
+        code='AMOUNT10',
+        max_redemptions=100,
+        coupon=coupon_amount,
+      )
+      PromotionCode.objects.create(
+        id='promo_expired',
+        active=True,
+        code='EXPIRED',
+        expires_at=dt.date(2020, 1, 1),
+        coupon=coupon,
+      )
+      self.customer = Customer.objects.create(
         id='cus_test',
         email='test@example.com',
         name='Test Customer',
@@ -105,7 +125,7 @@ class StripeAdminTest(TestCase):
         disputed=False,
         refunded=False,
         status='succeeded',
-        customer=customer,
+        customer=self.customer,
         balance_transaction=balance_transaction,
         receipt_email='test@example.com',
       )
@@ -140,13 +160,13 @@ class StripeAdminTest(TestCase):
         period_end=NOW,
         invoice_pdf='https://example.com/invoice.pdf',
         hosted_invoice_url='https://example.com/invoice',
-        customer=customer,
+        customer=self.customer,
       )
       subscription = Subscription.objects.create(
         id='sub_test',
         status='active',
         cancel_at_period_end=False,
-        customer=customer,
+        customer=self.customer,
         collection_method='charge_automatically',
       )
       SubscriptionItem.objects.create(
@@ -163,7 +183,7 @@ class StripeAdminTest(TestCase):
         id='sub_canceling',
         status='active',
         cancel_at_period_end=True,
-        customer=customer,
+        customer=self.customer,
         collection_method='charge_automatically',
       )
       SubscriptionItem.objects.create(
@@ -235,7 +255,7 @@ class StripeAdminTest(TestCase):
     admin_obj: admin.options.BaseModelAdmin[models.Model],
     request: HttpRequest,
   ) -> None:
-    # Assertions for the three primary write permissions
+    """Assertions for the three primary write permissions."""
     self.assertFalse(admin_obj.has_add_permission(request))
     self.assertFalse(admin_obj.has_change_permission(request))
     self.assertFalse(admin_obj.has_delete_permission(request))

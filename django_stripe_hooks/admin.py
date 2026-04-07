@@ -273,6 +273,7 @@ class SubscriptionAdmin(StripeModelAdmin[Subscription]):
   list_display = (
     'customer',
     'status_verbose',
+    'current_period_start',
     'current_period_end',
   )
   list_select_related = (
@@ -386,6 +387,7 @@ class InvoiceAdmin(StripeModelAdmin[Invoice]):
     'period_start',
     'period_end',
     'status_chip',
+    'has_prorations',
     'pdf',
     'link',
   )

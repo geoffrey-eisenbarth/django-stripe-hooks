@@ -1,4 +1,5 @@
 import datetime as dt
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -9,6 +10,9 @@ from django.conf import settings
 from django_stripe_hooks.managers import allow_stripe_write
 from django_stripe_hooks.models import (
   Customer, ConfirmationToken, FundingInstructions,
+  PaymentMethod,
+  Product, PriceTier, Coupon, PromotionCode, Discount,
+  Invoice, InvoicePayment,
 )
 
 
@@ -143,3 +147,157 @@ class TestWriteGuard:
     customer.email = 'blocked@test.com'
     with pytest.raises(TypeError, match='managed by Stripe'):
       customer.save()
+
+
+@pytest.mark.django_db
+class TestModelProperties:
+  """Test computed properties on models that don't require the Stripe API."""
+
+  @pytest.fixture(autouse=True)
+  def create_fixtures(self) -> None:
+    with allow_stripe_write():
+      customer = Customer.objects.create(
+        id='cus_prop_test',
+        email='props@test.com',
+      )
+      PaymentMethod.objects.create(
+        id='pm_card',
+        type='card',
+        card={'brand': 'visa', 'last4': '4242'},
+        customer=customer,
+      )
+      PaymentMethod.objects.create(
+        id='pm_empty',
+        type='card',
+        card={},
+        customer=customer,
+      )
+      now = dt.datetime(2025, 1, 1, tzinfo=dt.UTC)
+      ConfirmationToken.objects.create(
+        id='ct_test',
+        created=now,
+        expires_at=now - dt.timedelta(days=1),
+        card_brand='visa',
+        card_exp_month=12,
+        card_exp_year=2030,
+        card_last4='4242',
+        zip_code='',
+        customer=customer,
+      )
+
+  def test_confirmation_token_properties(self) -> None:
+    """ConfirmationToken.is_expired and card_info properties."""
+
+    token = ConfirmationToken.objects.get(id='ct_test')
+
+    assert token.is_expired is True
+
+    info = token.card_info
+    assert 'Visa' in info
+    assert '4242' in info
+
+  def test_payment_method_card_info(self) -> None:
+    """PaymentMethod.card_info with and without card data."""
+
+    pm_card = PaymentMethod.objects.get(id='pm_card')
+    info = pm_card.card_info
+    assert 'Visa' in info
+    assert '4242' in info
+
+    pm_empty = PaymentMethod.objects.get(id='pm_empty')
+    assert pm_empty.card_info == ''
+
+
+class TestDeserializeEdgeCases:
+  """Unit-test edge-case branches in StripeModel.deserialize() overrides."""
+
+  def test_m2o_rel_with_dict_value(self) -> None:
+    """ManyToOneRel field: value is a plain dict with 'data' key → line 133.
+
+    This branch is reached when the caller passes a raw dict rather than a
+    StripeObject, which happens during manual deserialization. construct_from()
+    cannot reproduce it because nested dicts are eagerly converted to
+    StripeObjects (which expose .data directly, skipping the dict branch).
+    """
+
+    result = Product.deserialize({  # type: ignore[arg-type]
+      'prices': {'data': ['price_test']}
+    })
+    assert result.get('prices') == ['price_test']
+
+  def test_m2m_field(self) -> None:
+    """ManyToManyField: value is a list of IDs → line 137."""
+
+    stripe_obj = stripe.Coupon.construct_from({
+      'products': ['prod_test'],
+    }, 'key')
+    result = Coupon.deserialize(stripe_obj)
+    assert result.get('products') == ['prod_test']
+
+  def test_price_tier_deserialize(self) -> None:
+    """PriceTier.deserialize returns dict(stripe_obj) → line 382."""
+
+    stripe_obj = stripe.StripeObject.construct_from({
+      'flat_amount': 100,
+      'unit_amount': 5,
+    }, 'key')
+    result = PriceTier.deserialize(stripe_obj)
+    assert result == {'flat_amount': 100, 'unit_amount': 5}
+
+  def test_promotion_code_deserialize_str_coupon(self) -> None:
+    """PromotionCode.deserialize with a string coupon ID → lines 570-571."""
+
+    stripe_obj = stripe.PromotionCode.construct_from({
+      'promotion': {'coupon': 'coup_test'},
+    }, 'key')
+    result = PromotionCode.deserialize(stripe_obj)
+    assert result.get('coupon_id') == 'coup_test'
+
+  def test_discount_deserialize_str_coupon(self) -> None:
+    """Discount.deserialize with a string coupon ID → line 692."""
+
+    stripe_obj = stripe.Discount.construct_from({
+      'source': {'coupon': 'coup_test'},
+    }, 'key')
+    result = Discount.deserialize(stripe_obj)
+    assert result.get('coupon_id') == 'coup_test'
+
+  def test_discount_deserialize_coupon_object(self) -> None:
+    """Discount.deserialize with a stripe.Coupon object → line 690."""
+
+    stripe_obj = stripe.Discount.construct_from({
+      'source': {'coupon': {'id': 'coup_test', 'object': 'coupon'}},
+    }, 'key')
+    result = Discount.deserialize(stripe_obj)
+    assert isinstance(result.get('coupon'), stripe.Coupon)
+
+  def test_invoice_deserialize_with_taxes(self) -> None:
+    """Invoice.deserialize loops over total_taxes entries → line 1452."""
+
+    stripe_obj = stripe.Invoice.construct_from({
+      'parent': None,
+      'total_discount_amounts': [],
+      'total_taxes': [{'amount': 100}]
+    }, 'key')
+    result = Invoice.deserialize(stripe_obj)
+    assert result.get('total_taxes_amount') == Decimal(1)
+
+  def test_invoice_deserialize_str_subscription(self) -> None:
+    """Invoice.deserialize with a string subscription ID → lines 1443-1444."""
+
+    stripe_obj = stripe.Invoice.construct_from({
+      'parent': {'subscription_details': {'subscription': 'sub_test'}},
+      'total_discount_amounts': [],
+      'total_taxes': [],
+    }, 'key')
+    result = Invoice.deserialize(stripe_obj)
+    assert result.get('subscription_id') == 'sub_test'
+
+  def test_invoice_payment_deserialize_str_payment_intent(self) -> None:
+    """InvoicePayment.deserialize with a string payment_intent ID."""
+
+    stripe_obj = stripe.StripeObject.construct_from({
+      'payment': {'type': 'payment_intent', 'payment_intent': 'pi_test'},
+    }, 'key')
+    result = InvoicePayment.deserialize(stripe_obj)
+    assert result.get('payment_intent_id') == 'pi_test'
