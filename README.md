@@ -8,17 +8,16 @@ Instead of making manual API calls every time you need Stripe data, this library
 Incoming webhooks are signature-verified and routed to `update_or_create` calls on the corresponding Django model.
 Your database reflects Stripe's authoritative state; you query it like any other Django model.
 
-> **The local models are read-only mirrors of Stripe.**
-> Always create or modify Stripe objects through the Stripe SDK (or Dashboard) — the corresponding local model will be updated automatically when the webhook arrives.
-> If you need the local instance immediately (e.g. in the same request context, without waiting for a webhook), you can call `Model.objects.from_stripe()` directly on the return value of any SDK method:
->
-> ```python
-> stripe_customer = stripe_client.v1.customers.create(params={...})
-> customer = Customer.objects.from_stripe(stripe_customer)  # synced immediately
-> ```
+**The local models are read-only mirrors of Stripe.**
+Always create or modify Stripe objects through the Stripe SDK (or Dashboard) — the corresponding local model will be updated automatically when the webhook arrives.
+If you need the local instance immediately (e.g. in the same request context, without waiting for a webhook), you can call `Model.objects.from_stripe()` directly on the return value of any SDK method:
 
-> **Warning:** This package is under active development.
-> We will not make API stability promises until a stable version is released.
+```python
+stripe_customer = stripe_client.v1.customers.create(params={...})
+customer = Customer.objects.from_stripe(stripe_customer)  # synced immediately
+
+This library facilitates Stripe integration.
+Always test thoroughly in Stripe's test mode before deploying to production.
 
 ---
 
