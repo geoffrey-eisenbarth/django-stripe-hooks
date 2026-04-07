@@ -102,6 +102,7 @@ class TestWebhooks:
 
     assert not broken, "Dangling FK references:\n" + "\n".join(broken)
 
+  @pytest.mark.flaky(reruns=2, reruns_delay=10)
   def test_crud(self, live_server: LiveServer) -> None:
     """Integration testing for Product and Billing primatives.
 

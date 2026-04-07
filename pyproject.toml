@@ -29,6 +29,7 @@ ipython = '^9.11.0'
 django-environ = '^0.13.0'
 ipdb = '^0.13.13'
 pytest-cov = '^7.1.0'
+pytest-rerunfailures = "^16.1"
 
 [build-system]
 requires = ['poetry-core>=2.0.0,<3.0.0']
