@@ -194,23 +194,19 @@ class SubscriptionInline(StripeModelInline[Subscription, Customer]):
   extra = 0
   fields = (
     'status',
+    'cancel_at_period_end',
+  )
+  readonly_fields = (
     'current_period_start',
     'current_period_end',
-    'discounts',
-    'cancel_at_period_end',
   )
 
 
 class PaymentMethodInline(StripeModelInline[PaymentMethod, Customer]):
   model = PaymentMethod
   extra = 0
-  fields = (
-    'card_info',
-    'card_exp_month',
-    'card_exp_year',
-    'zip_code',
-    'is_default',
-  )
+  fields = ('type',)
+  readonly_fields = ('card_info',)
 
 
 class InvoiceInline(StripeModelInline[Invoice, Customer]):
@@ -221,9 +217,8 @@ class InvoiceInline(StripeModelInline[Invoice, Customer]):
     'status',
     'period_start',
     'period_end',
-    'pdf',
-    'link',
   )
+  readonly_fields = ('pdf_link', 'link')
 
   @admin.display(description=_("PDF"))
   def pdf_link(self, obj: Invoice) -> str:
