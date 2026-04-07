@@ -415,7 +415,8 @@ class Coupon(StripeModel[stripe.Coupon]):
     verbose_name=_("Currency"),
   )
   percent_off = models.PositiveIntegerField(
-    default=0,
+    null=True,
+    blank=True,
     verbose_name=_("Percent off"),
     help_text=_(
       "Percent that will be taken off of a subscription"
@@ -424,6 +425,8 @@ class Coupon(StripeModel[stripe.Coupon]):
   amount_off = models.DecimalField(
     max_digits=8,
     decimal_places=2,
+    null=True,
+    blank=True,
     verbose_name=_("Amount off"),
     help_text=_(
       "Amount that will be taken off of a subscription"
