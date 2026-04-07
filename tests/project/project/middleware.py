@@ -5,10 +5,12 @@ from django.http import HttpRequest, HttpResponse
 
 from typing import Callable
 
-# Serialize all webhook requests so concurrent threads don't close each
-# other's active DB connections. SQLite is single-writer anyway, so there
-# is no throughput cost.
-_request_lock = threading.Lock()
+# Protects only the connection-reset section so two threads don't concurrently
+# inspect and close the same inherited connection. Request bodies are processed
+# outside this lock so the Django live-server can handle concurrent webhook
+# deliveries; SQLite WAL mode + the 20-second busy timeout handle write
+# serialisation instead.
+_reset_lock = threading.Lock()
 
 
 class ResetDBConnectionsMiddleware:
@@ -31,7 +33,7 @@ class ResetDBConnectionsMiddleware:
       self.get_response = get_response
 
   def __call__(self, request: HttpRequest) -> HttpResponse:
-    with _request_lock:
+    with _reset_lock:
       current_thread = threading.get_ident()
       for alias in connections:
         conn = connections[alias]
@@ -61,4 +63,4 @@ class ResetDBConnectionsMiddleware:
         conn.needs_rollback = False
         conn.close()
         setattr(conn, '_thread_ident', original_ident)
-      return self.get_response(request)
+    return self.get_response(request)
