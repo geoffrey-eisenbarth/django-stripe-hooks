@@ -14,7 +14,9 @@ from django.utils.functional import cached_property
 from django.utils.safestring import mark_safe
 from django.utils.translation import gettext_lazy as _
 
-from django_stripe_hooks.managers import StripeManager, is_stripe_model
+from django_stripe_hooks.managers import (
+  StripeManager, is_stripe_model, _write_depth,
+)
 
 
 T = TypeVar('T', bound=stripe.StripeObject)
@@ -49,14 +51,24 @@ class StripeModel(models.Model, Generic[T]):
   class Meta:
     abstract = True
 
-  @staticmethod
-  def _stripe_to_dict(obj: Any) -> Any:
-    """Recursively convert stripe.StripeObject to plain Python dicts."""
-    if isinstance(obj, stripe.StripeObject):
-      return {k: StripeModel._stripe_to_dict(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-      return [StripeModel._stripe_to_dict(v) for v in obj]
-    return obj
+  def save(self, *args: Any, **kwargs: Any) -> None:
+    if getattr(_write_depth, 'count', 0) == 0:
+      raise TypeError(
+        f"{self.__class__.__name__} is managed by Stripe. "
+        "Create and update objects via the Stripe SDK; "
+        "the local model is updated automatically when the webhook arrives. "
+        f"To sync immediately, call {self.__class__.__name__}.objects.from_stripe()."  # noqa: E501
+      )
+    super().save(*args, **kwargs)
+
+  def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
+    if getattr(_write_depth, 'count', 0) == 0:
+      raise TypeError(
+        f"{self.__class__.__name__} is managed by Stripe. "
+        "Delete objects via the Stripe SDK; the local model "
+        "is soft-deleted automatically when the webhook arrives."
+      )
+    return super().delete(*args, **kwargs)
 
   @classmethod
   def stripe_clean(

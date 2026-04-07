@@ -1,4 +1,5 @@
 from typing import TYPE_CHECKING, TypeVar, TypeGuard, Any
+import threading
 
 import stripe
 
@@ -7,6 +8,27 @@ from django.db import models, transaction
 
 if TYPE_CHECKING:
   from django_stripe_hooks.models import StripeModel
+
+
+_write_depth = threading.local()
+
+
+class allow_stripe_write:
+  """Context manager that permits StripeModel.save() and .delete() writes.
+
+  Uses a reentrant counter so nested from_stripe() calls don't prematurely
+  revoke write access for the outer call.
+
+  Note: QuerySet.update(), QuerySet.delete(), bulk_create(), and bulk_update()
+  bypass save()/delete() entirely and are not guarded by this mechanism.
+  """
+
+  def __enter__(self) -> 'allow_stripe_write':
+    _write_depth.count = getattr(_write_depth, 'count', 0) + 1
+    return self
+
+  def __exit__(self, *args: Any) -> None:
+    _write_depth.count = max(0, getattr(_write_depth, 'count', 0) - 1)
 
 
 T = TypeVar('T', bound='StripeModel[stripe.StripeObject]')
@@ -69,7 +91,7 @@ class StripeManager(models.Manager[T]):
         related_obj = field.related_model.objects.from_stripe(related_stripe_obj)  # noqa: E501
         data[field.attname] = related_obj.id
 
-    with transaction.atomic():
+    with allow_stripe_write(), transaction.atomic():
       django_obj, created = self.update_or_create(
         id=data.pop('id'),
         defaults=data,
