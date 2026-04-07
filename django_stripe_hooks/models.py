@@ -19,7 +19,6 @@ from django_stripe_hooks.managers import StripeManager, is_stripe_model
 
 T = TypeVar('T', bound=stripe.StripeObject)
 
-Deserialized = dict[str, Any]
 CURRENCIES = (
   ('', _("N/A")),
   ('usd', _("US Dollars")),
@@ -93,7 +92,7 @@ class StripeModel(models.Model, Generic[T]):
   def deserialize(
     cls,
     stripe_obj: T,
-  ) -> Deserialized:
+  ) -> dict[str, Any]:
     """Convert a StripeObject (or plain dict) to a nested Django field dict.
 
     FK fields with an expanded object produce ``data[field.name] = {...}``.
@@ -111,11 +110,6 @@ class StripeModel(models.Model, Generic[T]):
       if isinstance(field, (models.ForeignKey, models.OneToOneField)):
         if isinstance(value, stripe.StripeObject):
           data[field.name] = value
-          # RelatedModel = field.related_model
-          # if is_stripe_model(RelatedModel):
-          #   data[field.name] = RelatedModel.deserialize(value)
-          # else:
-          #   data[field.name] = cls._stripe_to_dict(value)
         elif isinstance(value, str):
           data[field.attname] = value
 
@@ -125,7 +119,6 @@ class StripeModel(models.Model, Generic[T]):
           items = getattr(value, 'data', value)
           if isinstance(items, dict):
             items = items.get('data', [])
-          # data[field.name] = [RelatedModel.deserialize(i) for i in items]
           data[field.name] = items
 
       elif isinstance(field, models.ManyToManyField):
@@ -317,7 +310,7 @@ class Price(StripeModel[stripe.Price]):
     verbose_name_plural = _("Price")
 
   @classmethod
-  def deserialize(cls, stripe_obj: stripe.Price) -> Deserialized:
+  def deserialize(cls, stripe_obj: stripe.Price) -> dict[str, Any]:
     data = super().deserialize(stripe_obj)
 
     if (recurring := getattr(stripe_obj, 'recurring', None)) is not None:
@@ -373,7 +366,7 @@ class PriceTier(models.Model):
   )
 
   @classmethod
-  def deserialize(cls, stripe_obj: stripe.StripeObject) -> Deserialized:
+  def deserialize(cls, stripe_obj: stripe.StripeObject) -> dict[str, Any]:
     return dict(stripe_obj)
 
 
@@ -474,7 +467,7 @@ class Coupon(StripeModel[stripe.Coupon]):
     return terms
 
   @classmethod
-  def deserialize(cls, stripe_obj: stripe.Coupon) -> Deserialized:
+  def deserialize(cls, stripe_obj: stripe.Coupon) -> dict[str, Any]:
     data = super().deserialize(stripe_obj)
 
     if (applies_to := getattr(stripe_obj, 'applies_to', None)) is not None:
@@ -555,7 +548,7 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
     verbose_name_plural = _("Promotion Codes")
 
   @classmethod
-  def deserialize(cls, stripe_obj: stripe.PromotionCode) -> Deserialized:
+  def deserialize(cls, stripe_obj: stripe.PromotionCode) -> dict[str, Any]:
     data = super().deserialize(stripe_obj)
 
     if stripe_obj.promotion:
@@ -676,7 +669,7 @@ class Discount(StripeModel[stripe.Discount]):
     verbose_name_plural = _("Discounts")
 
   @classmethod
-  def deserialize(cls, stripe_obj: stripe.Discount) -> Deserialized:
+  def deserialize(cls, stripe_obj: stripe.Discount) -> dict[str, Any]:
     data = super().deserialize(stripe_obj)
 
     if (source := getattr(stripe_obj, 'source', None)) is not None:
@@ -1050,7 +1043,10 @@ class FundingInstructions(models.Model):
     verbose_name_plural = _("Funding Instructions")
 
   @classmethod
-  def deserialize(cls, stripe_obj: stripe.FundingInstructions) -> Deserialized:
+  def deserialize(
+    cls,
+    stripe_obj: stripe.FundingInstructions,
+  ) -> dict[str, Any]:
     data: dict[str, Any] = {}
     for fa in stripe_obj.bank_transfer.financial_addresses:
       if (fa.type == 'aba') and (fa.aba is not None):
@@ -1112,7 +1108,7 @@ class Subscription(StripeModel[stripe.Subscription]):
 
   STATUSES = (
     ('incomplete', _("Incomplete")),
-    ('incomplete_expired', _("Incomplete expired")),  # Terminal state
+    ('incomplete_expired', _("Incomplete expired")),
     ('trialing', _("Trial")),
     ('active', _("Active")),
     ('past_due', _("Past due")),
@@ -1425,7 +1421,7 @@ class Invoice(StripeModel[stripe.Invoice]):
     get_latest_by = 'created'
 
   @classmethod
-  def deserialize(cls, stripe_obj: stripe.Invoice) -> Deserialized:
+  def deserialize(cls, stripe_obj: stripe.Invoice) -> dict[str, Any]:
     data = super().deserialize(stripe_obj)
 
     if stripe_obj.parent and stripe_obj.parent.subscription_details:
@@ -1521,7 +1517,7 @@ class InvoiceLineItem(StripeModel[stripe.StripeObject]):
     verbose_name_plural = _("Invoice Line Items")
 
   @classmethod
-  def deserialize(cls, stripe_obj: stripe.StripeObject) -> Deserialized:
+  def deserialize(cls, stripe_obj: stripe.StripeObject) -> dict[str, Any]:
     data = super().deserialize(stripe_obj)
 
     if (period := stripe_obj.get('period')) is not None:
@@ -1614,7 +1610,7 @@ class InvoicePayment(StripeModel[stripe.StripeObject]):
     verbose_name_plural = _("Invoice Payments")
 
   @classmethod
-  def deserialize(cls, stripe_obj: stripe.StripeObject) -> Deserialized:
+  def deserialize(cls, stripe_obj: stripe.StripeObject) -> dict[str, Any]:
     data = super().deserialize(stripe_obj)
 
     if (payment := stripe_obj.get('payment')) is not None:
