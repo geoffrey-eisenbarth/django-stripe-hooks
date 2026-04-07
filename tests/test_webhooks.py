@@ -291,8 +291,8 @@ class TestWebhooks:
     )
 
     # Wait for any delayed webhooks to arrive, then verify FK integrity.
-    # Retry up to 60 seconds to give CI headroom for late webhook delivery.
-    deadline = time.monotonic() + 60
+    # Retry up to 120 seconds to give CI headroom for late webhook delivery.
+    deadline = time.monotonic() + 120
     while True:
       time.sleep(5)
       try:
