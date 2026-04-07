@@ -86,10 +86,9 @@ class StripeManager(models.Manager[T]):
 
     # Resolve pre-save FKs outside the parent's transaction
     for field, related_stripe_obj in pre_save.items():
-      if is_stripe_model(field.related_model):
-        assert is_stripe_model(field.related_model)
-        related_obj = field.related_model.objects.from_stripe(related_stripe_obj)  # noqa: E501
-        data[field.attname] = related_obj.id
+      assert is_stripe_model(field.related_model)
+      related_obj = field.related_model.objects.from_stripe(related_stripe_obj)  # noqa: E501
+      data[field.attname] = related_obj.id
 
     with allow_stripe_write(), transaction.atomic():
       django_obj, created = self.update_or_create(

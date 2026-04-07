@@ -150,6 +150,52 @@ class TestWriteGuard:
 
 
 @pytest.mark.django_db
+class TestFromStripe:
+  """Unit tests for StripeManager.from_stripe() edge-case paths."""
+
+  def test_m2o_rel_inline_children(self) -> None:
+    """ManyToOneRel post-save: inline child StripeObjects are saved.
+
+    Covers the ManyToOneRel branch in from_stripe() along with the bare-string
+    ID skip that handles out-of-order webhook references.
+    """
+
+    s_price = stripe.Price.construct_from({
+      'id': 'price_inline',
+      'object': 'price',
+      'active': True,
+      'nickname': 'Inline Price',
+      'type': 'recurring',
+      'interval': 'month',
+      'billing_scheme': 'per_unit',
+      'tiers_mode': 'na',
+      'unit_amount': 1000,
+      'currency': 'usd',
+      'product': 'prod_inline',
+    }, 'key')
+
+    s_product = stripe.Product.construct_from({
+      'id': 'prod_inline',
+      'object': 'product',
+      'active': True,
+      'name': 'Inline Product',
+      'description': 'Has inline prices',
+      'statement_descriptor': 'INLINE',
+      # A real StripeObject child plus a bare ID (bare ID should be skipped)
+      'prices': [s_price, 'price_other'],
+    }, 'key')
+
+    from django_stripe_hooks.models import Product, Price
+    django_product = Product.objects.from_stripe(s_product)
+
+    assert Product.objects.filter(id='prod_inline').exists()
+    assert Price.objects.filter(
+      id='price_inline',
+      product=django_product,
+    ).exists()
+
+
+@pytest.mark.django_db
 class TestModelProperties:
   """Test computed properties on models that don't require the Stripe API."""
 

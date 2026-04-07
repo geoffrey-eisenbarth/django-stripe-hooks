@@ -2,6 +2,7 @@ from decimal import Decimal
 import time
 import uuid
 from typing import TypeVar, Any, Generator
+from unittest.mock import MagicMock, patch
 
 import stripe
 import pytest
@@ -12,9 +13,12 @@ from django.core.handlers.wsgi import WSGIHandler
 from django.core.signals import got_request_exception
 from django.db import models as models
 from django.http import HttpRequest
+from django.test import RequestFactory
 
 from django_stripe_hooks import models as stripe_models
 from django_stripe_hooks.managers import is_stripe_model
+from django_stripe_hooks.models import Customer
+from django_stripe_hooks.views import StripeWebhooks
 from pytest_django.live_server_helper import LiveServer
 
 T = TypeVar('T', bound='stripe_models.StripeModel[Any]')
@@ -302,3 +306,64 @@ class TestWebhooks:
       except AssertionError:
         if time.monotonic() >= deadline:
           raise
+
+
+class TestAuthorHooks:
+  """Author hooks are invoked correctly."""
+
+  def test_hook_called_without_exception(self) -> None:
+    """A matching method is called for the event type."""
+    called: list[bool] = []
+
+    class MyHooks(StripeWebhooks):
+      def customer_created(self) -> None:
+        called.append(True)
+
+    fake_event = stripe.Event.construct_from({
+      'id': 'evt_test',
+      'type': 'customer.created',
+      'data': {'object': {'id': 'cus_test', 'object': 'customer'}},
+    }, 'key')
+
+    factory = RequestFactory()
+    request = factory.post(
+      '/stripe/webhooks/',
+      data=b'{}',
+      content_type='application/json',
+    )
+    request.META['HTTP_STRIPE_SIGNATURE'] = 'test'
+
+    with (
+      patch.object(StripeWebhooks, 'stripe_client') as mock_client,
+      patch.object(Customer.objects, 'from_stripe', return_value=MagicMock()),
+    ):
+      mock_client.construct_event.return_value = fake_event
+      response = MyHooks.as_view()(request)
+
+    assert called == [True]
+    assert response.status_code == 200
+
+  def test_no_hook_still_succeeds(self) -> None:
+    """When no matching method exists, the response is still 200."""
+    fake_event = stripe.Event.construct_from({
+      'id': 'evt_test',
+      'type': 'customer.created',
+      'data': {'object': {'id': 'cus_test', 'object': 'customer'}},
+    }, 'key')
+
+    factory = RequestFactory()
+    request = factory.post(
+      '/stripe/webhooks/',
+      data=b'{}',
+      content_type='application/json',
+    )
+    request.META['HTTP_STRIPE_SIGNATURE'] = 'test'
+
+    with (
+      patch.object(StripeWebhooks, 'stripe_client') as mock_client,
+      patch.object(Customer.objects, 'from_stripe', return_value=MagicMock()),
+    ):
+      mock_client.construct_event.return_value = fake_event
+      response = StripeWebhooks.as_view()(request)
+
+    assert response.status_code == 200
