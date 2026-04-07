@@ -476,6 +476,8 @@ class Coupon(StripeModel[stripe.Coupon]):
       terms = f'{self.percent_off}% off {self.duration}'
     elif self.amount_off:
       terms = f'${self.amount_off} off {self.duration}'
+    else:
+      terms = ''
     return terms
 
   @classmethod
@@ -1183,7 +1185,7 @@ class Subscription(StripeModel[stripe.Subscription]):
 
   @cached_property
   def current_period_end(self) -> dt.datetime:
-    return max(item.current_period_start for item in self.items.all())
+    return max(item.current_period_end for item in self.items.all())
 
 
 class SubscriptionItem(StripeModel[stripe.SubscriptionItem]):
