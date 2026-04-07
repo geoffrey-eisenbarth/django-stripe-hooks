@@ -29,7 +29,7 @@ SECRET_KEY = 'django-insecure-&n4lizoeomyja)7m+$dh)r_j7(&aon#*gj+*+#t0kg=c^p!ofc
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS: list[str] = ['ironbeard.org:8000']
+ALLOWED_HOSTS: list[str] = ['localhost']
 
 
 # Application definition

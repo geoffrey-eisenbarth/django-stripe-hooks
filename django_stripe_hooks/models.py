@@ -48,6 +48,9 @@ class StripeModel(models.Model, Generic[T]):
   class Meta:
     abstract = True
 
+  def __str__(self) -> str:
+    return f"{self.__class__.__name__} ({self.id})"
+
   def save(self, *args: Any, **kwargs: Any) -> None:
     if getattr(_write_depth, 'count', 0) == 0:
       raise TypeError(
@@ -82,6 +85,9 @@ class StripeModel(models.Model, Generic[T]):
         pass
       else:
         value = dt.datetime.fromtimestamp(value, tz=dt.timezone.utc)
+    elif isinstance(field, models.BooleanField):
+      if (value is None) and not field.null:
+        value = False
     elif isinstance(field, models.IntegerField):
       if (value is None) and not field.null:
         value = 0
@@ -157,6 +163,10 @@ class Product(StripeModel[stripe.Product]):
 
   active = models.BooleanField(
     verbose_name=_("Active?"),
+  )
+  deleted = models.BooleanField(
+    default=False,
+    verbose_name=_("Deleted?"),
   )
   name = models.CharField(
     max_length=255,
@@ -465,9 +475,13 @@ class Coupon(StripeModel[stripe.Coupon]):
     null=True,
     blank=True,
     verbose_name=_("Redeem by"),
-  ),
+  )
   valid = models.BooleanField(
     verbose_name=_("Valid?"),
+  )
+  deleted = models.BooleanField(
+    default=False,
+    verbose_name=_("Deleted?"),
   )
 
   @property
@@ -483,6 +497,12 @@ class Coupon(StripeModel[stripe.Coupon]):
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Coupon) -> dict[str, Any]:
     data = super().deserialize(stripe_obj)
+
+    if getattr(stripe_obj, 'deleted', False):
+      data.setdefault('name', f'Deleted ({stripe_obj.id})')
+      data.setdefault('currency', '')
+      data.setdefault('duration', '')
+      data.setdefault('valid', False)
 
     if (applies_to := getattr(stripe_obj, 'applies_to', None)) is not None:
       data['products'] = list(applies_to.products)

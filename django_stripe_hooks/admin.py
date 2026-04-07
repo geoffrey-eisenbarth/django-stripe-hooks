@@ -86,6 +86,9 @@ class StripeModelInline(admin.TabularInline[ChildModelT, ParentModelT]):
 class ProductAdmin(StripeModelAdmin[Product]):
   list_display = (
     'name',
+    'description',
+    'active',
+    'deleted',
   )
 
   fieldsets = (
@@ -104,7 +107,6 @@ class PriceTierInline(StripeModelInline[PriceTier, Price]):
   fields = ('flat_amount', 'unit_amount', 'up_to')
 
 
-# TODO: This uses custom admin html and css. Is it needed?
 @admin.register(Price)
 class PriceAdmin(StripeModelAdmin[Price]):
   list_display = (
@@ -143,6 +145,11 @@ class CouponAdmin(StripeModelAdmin[Coupon]):
   list_display = (
     'name',
     'terms',
+    'times_redeemed',
+    'max_redemptions',
+    'redeem_by',
+    'valid',
+    'deleted'
   )
 
   fieldsets = (
