@@ -7,7 +7,9 @@ from django.db import models, transaction
 
 
 if TYPE_CHECKING:
-  from django_stripe_hooks.models import StripeModel
+  from django_stripe_hooks.models import (
+    Customer, FundingInstructions, StripeModel,
+  )
 
 
 _write_depth = threading.local()
@@ -50,6 +52,21 @@ def is_stripe_model(
      and issubclass(val, models.Model)
      and hasattr(val, 'deserialize')
    )
+
+
+class FundingInstructionsManager(models.Manager['FundingInstructions']):
+  def from_stripe(
+    self,
+    customer: 'Customer',
+    stripe_obj: stripe.FundingInstructions,
+  ) -> 'FundingInstructions':
+    """Updates or creates FundingInstructions from a Stripe API object."""
+    data = self.model.deserialize(stripe_obj)
+    django_obj, created = self.update_or_create(
+      customer=customer,
+      defaults=data,
+    )
+    return django_obj
 
 
 class StripeManager(models.Manager[T]):

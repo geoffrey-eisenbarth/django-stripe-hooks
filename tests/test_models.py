@@ -69,7 +69,7 @@ class TestSpecializedModels:
         'currency': 'usd',
       },
     )
-    d_fi = FundingInstructions.from_stripe(d_customer, s_fi)
+    d_fi = FundingInstructions.objects.from_stripe(d_customer, s_fi)
 
     assert d_fi.customer.id == d_customer.id
 

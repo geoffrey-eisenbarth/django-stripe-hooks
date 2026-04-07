@@ -1,9 +1,6 @@
 import datetime as dt
 from decimal import Decimal
-from typing import (
-  TypeVar, Generic,
-  Any, Self,
-)
+from typing import TypeVar, Generic, Any
 
 import stripe
 
@@ -15,7 +12,7 @@ from django.utils.safestring import mark_safe
 from django.utils.translation import gettext_lazy as _
 
 from django_stripe_hooks.managers import (
-  StripeManager, is_stripe_model, _write_depth,
+  FundingInstructionsManager, StripeManager, is_stripe_model, _write_depth,
 )
 
 
@@ -1052,6 +1049,8 @@ class FundingInstructions(models.Model):
     verbose_name=_("SWIFT code"),
   )
 
+  objects = FundingInstructionsManager()
+
   class Meta:
     verbose_name = _("Funding Instructions")
     verbose_name_plural = _("Funding Instructions")
@@ -1077,21 +1076,6 @@ class FundingInstructions(models.Model):
         data['swift_code'] = fa.swift.swift_code
 
     return data
-
-  # TODO:
-  @classmethod
-  def from_stripe(
-    cls,
-    customer: Customer,
-    stripe_obj: stripe.FundingInstructions,
-  ) -> Self:
-    """Returns a Django model instance based on Stripe API object."""
-    data = FundingInstructions.deserialize(stripe_obj)
-    django_obj, created = cls.objects.update_or_create(
-      customer=customer,
-      defaults=data,
-    )
-    return django_obj
 
 
 class Subscription(StripeModel[stripe.Subscription]):
