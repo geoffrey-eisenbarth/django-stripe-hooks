@@ -223,13 +223,6 @@ class Product(StripeModel[stripe.Product]):
     'product.updated',
   )
 
-  active = models.BooleanField(
-    verbose_name=_("Active?"),
-  )
-  deleted = models.BooleanField(
-    default=False,
-    verbose_name=_("Deleted?"),
-  )
   name = models.CharField(
     max_length=255,
     unique=True,  # Create index
@@ -254,6 +247,13 @@ class Product(StripeModel[stripe.Product]):
     help_text=_(
       "This will appear on the customer's bank statement"
     ),
+  )
+  active = models.BooleanField(
+    verbose_name=_("Active?"),
+  )
+  deleted = models.BooleanField(
+    default=False,
+    verbose_name=_("Deleted?"),
   )
 
   class Meta(StripeModel.Meta):
@@ -285,10 +285,10 @@ class Price(StripeModel[stripe.Price]):
   )
   INTERVALS = (
     ('', _("N/A")),
-    ('day', _("Daily")),
-    ('week', _("Weekly")),
-    ('month', _("Monthly")),
-    ('year', _("Yearly")),
+    ('day', _("Day")),
+    ('week', _("Week")),
+    ('month', _("Month")),
+    ('year', _("Year")),
   )
   USAGE_TYPES = (
     ('', _("N/A")),
@@ -305,14 +305,32 @@ class Price(StripeModel[stripe.Price]):
     ('graduated', _("Graduated")),
   )
 
-  active = models.BooleanField(
-    verbose_name=_("Active?")
-  )
   nickname = models.CharField(
     max_length=255,
     verbose_name=_("Nickname"),
     help_text=_(
       "A brief description of the plan visible to customers"
+    ),
+  )
+  currency = models.CharField(
+    max_length=3,
+    choices=CURRENCIES,
+    verbose_name=_("Currency"),
+  )
+  unit_amount = models.DecimalField(
+    max_digits=8,
+    decimal_places=2,
+    verbose_name=_("Unit amount"),
+    help_text=_(
+      "Amount to be charged (per interval for recurring payments)"
+    ),
+  )
+  billing_scheme = models.CharField(
+    max_length=10,
+    choices=BILLING_SCHEMES,
+    verbose_name=_("Billing scheme"),
+    help_text=(
+      "How to compute the price per period"
     ),
   )
   type = models.CharField(
@@ -348,14 +366,6 @@ class Price(StripeModel[stripe.Price]):
       "Determines how the quantity per period should be determined"
     ),
   )
-  billing_scheme = models.CharField(
-    max_length=10,
-    choices=BILLING_SCHEMES,
-    verbose_name=_("Billing scheme"),
-    help_text=(
-      "How to compute the price per period"
-    ),
-  )
   tiers_mode = models.CharField(
     max_length=10,
     choices=TIERS_MODES,
@@ -365,25 +375,15 @@ class Price(StripeModel[stripe.Price]):
       "In graduated tiering, the pricing can change as the quantity grows."
     ),
   )
-  unit_amount = models.DecimalField(
-    max_digits=8,
-    decimal_places=2,
-    verbose_name=_("Price"),
-    help_text=_(
-      "Amount to be charged (per interval for recurring payments)"
-    ),
-  )
-  currency = models.CharField(
-    max_length=3,
-    choices=CURRENCIES,
-    verbose_name=_("Currency"),
-  )
   product = models.ForeignKey(
     Product,
     on_delete=models.PROTECT,
     db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='prices',
     verbose_name=_("Product"),
+  )
+  active = models.BooleanField(
+    verbose_name=_("Active?")
   )
 
   class Meta(StripeModel.Meta):
@@ -414,6 +414,14 @@ class PriceTier(models.Model):
 
   """
 
+  up_to = models.PositiveIntegerField(
+    blank=True,
+    null=True,
+    verbose_name=_("Up to"),
+    help_text=_(
+      "Quantity upper bound, leave blank for no upper bound"
+    ),
+  )
   flat_amount = models.DecimalField(
     max_digits=8,
     decimal_places=2,
@@ -428,14 +436,6 @@ class PriceTier(models.Model):
     verbose_name=_("Unit amount"),
     help_text=_(
       "Per unit cost in the tier"
-    ),
-  )
-  up_to = models.PositiveIntegerField(
-    blank=True,
-    null=True,
-    verbose_name=_("Up to"),
-    help_text=_(
-      "Quantity upper bound, leave blank for no upper bound"
     ),
   )
   price = models.ForeignKey(
@@ -481,11 +481,6 @@ class Coupon(StripeModel[stripe.Coupon]):
       "Name to display on invoices"
     ),
   )
-  currency = models.CharField(
-    max_length=3,
-    choices=CURRENCIES,
-    verbose_name=_("Currency"),
-  )
   percent_off = models.PositiveIntegerField(
     null=True,
     blank=True,
@@ -493,6 +488,11 @@ class Coupon(StripeModel[stripe.Coupon]):
     help_text=_(
       "Percent that will be taken off of a subscription"
     ),
+  )
+  currency = models.CharField(
+    max_length=3,
+    choices=CURRENCIES,
+    verbose_name=_("Currency"),
   )
   amount_off = models.DecimalField(
     max_digits=8,
@@ -512,6 +512,23 @@ class Coupon(StripeModel[stripe.Coupon]):
       "How long the discount will apply to a customer's subscription"
     ),
   )
+  times_redeemed = models.PositiveIntegerField(
+    default=0,
+    editable=False,
+    verbose_name=_("Current number of redemptions"),
+  )
+  max_redemptions = models.PositiveIntegerField(
+    default=0,
+    verbose_name=_("Maximum number of redemptions"),
+    help_text=_(
+      "Optional, leave blank for infinite redemptions"
+    ),
+  )
+  redeem_by = models.DateTimeField(
+    null=True,
+    blank=True,
+    verbose_name=_("Redeem by"),
+  )
   products = models.ManyToManyField(
     Product,
     related_name='coupons',
@@ -521,23 +538,6 @@ class Coupon(StripeModel[stripe.Coupon]):
       "Specify which product(s) this coupon will apply to"
     ),
   )
-  max_redemptions = models.PositiveIntegerField(
-    default=0,
-    verbose_name=_("Maximum number of redemptions"),
-    help_text=_(
-      "Optional, leave blank for infinite redemptions"
-    ),
-  )
-  times_redeemed = models.PositiveIntegerField(
-    default=0,
-    editable=False,
-    verbose_name=_("Current number of redemptions"),
-  )
-  redeem_by = models.DateTimeField(
-    null=True,
-    blank=True,
-    verbose_name=_("Redeem by"),
-  )
   valid = models.BooleanField(
     verbose_name=_("Valid?"),
   )
@@ -545,16 +545,6 @@ class Coupon(StripeModel[stripe.Coupon]):
     default=False,
     verbose_name=_("Deleted?"),
   )
-
-  @property
-  def terms(self) -> str:
-    if self.percent_off:
-      terms = f'{self.percent_off}% off {self.duration}'
-    elif self.amount_off:
-      terms = f'${self.amount_off} off {self.duration}'
-    else:
-      terms = ''
-    return terms
 
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Coupon) -> dict[str, Any]:
@@ -570,6 +560,25 @@ class Coupon(StripeModel[stripe.Coupon]):
       data['products'] = list(applies_to.products)
 
     return data
+
+  @property
+  def terms(self) -> str:
+    if self.percent_off:
+      terms = f'{self.percent_off}% off {self.duration}'
+    elif self.amount_off:
+      terms = f'${self.amount_off} off {self.duration}'
+    else:
+      terms = ''
+    return terms
+
+  @property
+  def redemptions(self) -> str:
+    count = f'{self.times_redeemed:,d}'
+    if self.max_redemptions:
+      maximum = f'{self.max_redemptions:,d}'
+    else:
+      maximum = '&infin;'
+    return mark_safe(f"{count} of {maximum}")
 
 
 class PromotionCode(StripeModel[stripe.PromotionCode]):
@@ -588,9 +597,6 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
     'promotion_code.updated',
   )
 
-  active = models.BooleanField(
-    verbose_name=_("Active?")
-  )
   code = models.CharField(
     max_length=100,
     unique=True,
@@ -603,13 +609,10 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
       "Alphanumeric code with no spaces or symbols"
     ),
   )
-  expires_at = models.DateField(
-    blank=True,
-    null=True,
-    verbose_name=_("Expires on"),
-    help_text=_(
-      "Optional, leave blank for no expiration date"
-    ),
+  times_redeemed = models.PositiveIntegerField(
+    default=0,
+    editable=False,
+    verbose_name=_("Current number of redemptions"),
   )
   max_redemptions = models.PositiveIntegerField(
     default=0,
@@ -618,10 +621,13 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
       "Optional, leave blank for infinite redemptions"
     ),
   )
-  times_redeemed = models.PositiveIntegerField(
-    default=0,
-    editable=False,
-    verbose_name=_("Current number of redemptions"),
+  expires_at = models.DateField(
+    blank=True,
+    null=True,
+    verbose_name=_("Expires on"),
+    help_text=_(
+      "Optional, leave blank for no expiration date"
+    ),
   )
   coupon = models.ForeignKey(
     Coupon,
@@ -637,6 +643,9 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
     null=True,
     blank=True,
     verbose_name=_("Customer"),
+  )
+  active = models.BooleanField(
+    verbose_name=_("Active?")
   )
 
   class Meta(StripeModel.Meta):
@@ -701,6 +710,29 @@ class Discount(StripeModel[stripe.Discount]):
     'customer.discount.updated',
   )
 
+  start = models.DateTimeField(
+    verbose_name=_("Start time"),
+  )
+  end = models.DateTimeField(
+    blank=True,
+    null=True,
+    verbose_name=_("End time"),
+  )
+  coupon = models.ForeignKey(
+    Coupon,
+    on_delete=models.PROTECT,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
+    related_name='discounts',
+    verbose_name=_("Coupon"),
+  )
+  promotion_code = models.ForeignKey(
+    PromotionCode,
+    on_delete=models.PROTECT,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
+    related_name='discounts',
+    null=True,
+    blank=True,
+  )
   customer = models.ForeignKey(
     'Customer',
     on_delete=models.SET_NULL,
@@ -735,29 +767,6 @@ class Discount(StripeModel[stripe.Discount]):
     related_name='discounts',
     null=True,
     blank=True,
-  )
-  promotion_code = models.ForeignKey(
-    PromotionCode,
-    on_delete=models.PROTECT,
-    db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='discounts',
-    null=True,
-    blank=True,
-  )
-  coupon = models.ForeignKey(
-    Coupon,
-    on_delete=models.PROTECT,
-    db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='discounts',
-    verbose_name=_("Coupon"),
-  )
-  start = models.DateTimeField(
-    verbose_name=_("Start time"),
-  )
-  end = models.DateTimeField(
-    blank=True,
-    null=True,
-    verbose_name=_("End time"),
   )
 
   class Meta(StripeModel.Meta):
@@ -876,6 +885,10 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
     default=dict,
     verbose_name=_("Card"),
   )
+  billing_details = models.JSONField(
+    default=dict,
+    verbose_name=_("Billing details"),
+  )
   customer = models.ForeignKey(
     Customer,
     on_delete=models.CASCADE,
@@ -899,6 +912,88 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
     else:
       s = ''
     return s
+
+
+class FundingInstructions(models.Model):
+  """Django implementation of Stripe Funding Instructions.
+
+  Notes
+  -----
+
+  Stripe Docs: https://stripe.com/docs/api/issuing/funding_instructions
+
+  """
+
+  customer = models.OneToOneField(
+    Customer,
+    on_delete=models.CASCADE,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
+    related_name='funding_instructions',
+    verbose_name=_("Customer"),
+  )
+  account_holder_name = models.CharField(
+    max_length=255,
+    verbose_name=_("Account holder name"),
+  )
+  account_type = models.CharField(
+    max_length=10,
+    verbose_name=_("Account type"),
+  )
+  account_number = models.CharField(
+    max_length=17,
+    verbose_name=_("Account number"),
+  )
+  bank_name = models.CharField(
+    max_length=255,
+    verbose_name=_("Bank name"),
+  )
+  routing_number = models.CharField(
+    max_length=9,
+    verbose_name=_("Routing number"),
+  )
+  swift_code = models.CharField(
+    max_length=11,
+    verbose_name=_("SWIFT code"),
+  )
+  account_holder_address = models.JSONField(
+    default=dict,
+    verbose_name=_("Account holder address"),
+  )
+  bank_address = models.JSONField(
+    default=dict,
+    verbose_name=_("Bank address"),
+  )
+
+  objects = FundingInstructionsManager()
+
+  class Meta:
+    verbose_name = _("Funding Instructions")
+    verbose_name_plural = _("Funding Instructions")
+
+  @classmethod
+  def deserialize(
+    cls,
+    stripe_obj: stripe.FundingInstructions,
+  ) -> dict[str, Any]:
+    data: dict[str, Any] = {}
+    for fa in stripe_obj.bank_transfer.financial_addresses:
+      if (fa.type == 'aba') and (fa.aba is not None):
+        data.update({
+          'account_holder_address': dict(fa.aba.account_holder_address),
+          'account_holder_name': fa.aba.account_holder_name,
+          'account_number': fa.aba.account_number,
+          'account_type': fa.aba.account_type,
+          'bank_address': dict(fa.aba.bank_address),
+          'bank_name': fa.aba.bank_name,
+          'routing_number': fa.aba.routing_number,
+        })
+      elif (fa.type == 'swift') and (fa.swift is not None):
+        data['swift_code'] = fa.swift.swift_code
+
+    return data
+
+  def __str__(self) -> str:
+    return self.bank_name
 
 
 class PaymentIntent(StripeModel[stripe.PaymentIntent]):
@@ -937,6 +1032,23 @@ class PaymentIntent(StripeModel[stripe.PaymentIntent]):
     ('succeeded', _("Succeeded")),
   )
 
+  description = models.CharField(
+    max_length=255,
+    verbose_name=_("Description"),
+    help_text=_(
+      "Description of this charge that will be displayed to customers"
+    ),
+  )
+  status = models.CharField(
+    max_length=23,
+    choices=STATUSES,
+    verbose_name=_("Status"),
+  )
+  currency = models.CharField(
+    max_length=3,
+    choices=CURRENCIES,
+    verbose_name=_("Currency"),
+  )
   amount = models.DecimalField(
     max_digits=8,
     decimal_places=2,
@@ -945,46 +1057,10 @@ class PaymentIntent(StripeModel[stripe.PaymentIntent]):
       "Amount to be collected"
     ),
   )
-  currency = models.CharField(
-    max_length=3,
-    choices=CURRENCIES,
-    verbose_name=_("Currency"),
-  )
-  description = models.CharField(
-    max_length=255,
-    verbose_name=_("Description"),
-    help_text=_(
-      "Description of this charge that will be displayed to customers"
-    ),
-  )
   setup_future_usage = models.CharField(
     max_length=11,
     choices=FUTURE_USAGES,
     verbose_name=_("Setup future usage"),
-  )
-  status = models.CharField(
-    max_length=23,
-    choices=STATUSES,
-    verbose_name=_("Status"),
-  )
-  customer = models.ForeignKey(
-    Customer,
-    on_delete=models.CASCADE,
-    db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='payment_intents',
-    verbose_name=_("Customer"),
-  )
-  receipt_email = models.EmailField(
-    verbose_name=_("Email address"),
-  )
-  payment_method = models.ForeignKey(
-    PaymentMethod,
-    on_delete=models.SET_NULL,
-    db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='payment_intents',
-    blank=True,
-    null=True,
-    verbose_name=_("Payment method"),
   )
   last_payment_error = models.JSONField(
     default=dict,
@@ -997,6 +1073,29 @@ class PaymentIntent(StripeModel[stripe.PaymentIntent]):
   payment_method_types = models.JSONField(
     default=list,
     verbose_name=_("Payment method types"),
+  )
+  receipt_email = models.EmailField(
+    verbose_name=_("Receipt email"),
+  )
+  billing_details = models.JSONField(
+    default=dict,
+    verbose_name=_("Billing details"),
+  )
+  customer = models.ForeignKey(
+    Customer,
+    on_delete=models.CASCADE,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
+    related_name='payment_intents',
+    verbose_name=_("Customer"),
+  )
+  payment_method = models.ForeignKey(
+    PaymentMethod,
+    on_delete=models.SET_NULL,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
+    related_name='payment_intents',
+    blank=True,
+    null=True,
+    verbose_name=_("Payment method"),
   )
 
   class Meta(StripeModel.Meta):
@@ -1025,36 +1124,9 @@ class ConfirmationToken(models.Model):
   expires_at = models.DateTimeField(
     verbose_name=_("Expires at"),
   )
-  # TODO: JSONField or card_xxx fields?
   payment_method_preview = models.JSONField(
     default=dict,
     verbose_name=_("Payment method preview"),
-  )
-  card_brand = models.CharField(
-    max_length=16,
-    choices=PaymentMethod.CARD_BRANDS,
-    verbose_name=_("Card brand"),
-    blank=True,
-  )
-  card_exp_month = models.IntegerField(
-    verbose_name=_("Two-digit card expiration month"),
-  )
-  card_exp_year = models.IntegerField(
-    verbose_name=_("Four-digit card expiration year"),
-  )
-  card_last4 = models.CharField(
-    max_length=4,
-    verbose_name=_("Card last four"),
-    blank=True,
-  )
-  zip_code = models.CharField(
-    max_length=10,
-    blank=True,
-    validators=[RegexValidator(
-      regex=r'(^\d{5}$)|(^\d{9}$)|(^\d{5}-\d{4}$)',
-      message=_("ZIP Coode must be 5 or 9 digits"),
-    )],
-    verbose_name=_("ZIP code"),
   )
   customer = models.ForeignKey(
     Customer,
@@ -1076,91 +1148,15 @@ class ConfirmationToken(models.Model):
 
   @property
   def card_info(self) -> str:
-    s = "{brand} {bullets} {bullets} {bullets} {last4}".format(
-      brand=dict(PaymentMethod.CARD_BRANDS)[self.card_brand],
-      bullets='\u2022' * 4,
-      last4=self.card_last4,
-    )
+    if card := self.payment_method_preview.get('card', {}):
+      s = "{brand} {bullets} {bullets} {bullets} {last4}".format(
+        brand=dict(PaymentMethod.CARD_BRANDS)[card.get('brand', 'unknown')],
+        bullets='\u2022' * 4,
+        last4=card.get('last4', '0000'),
+      )
+    else:
+      s = ''
     return s
-
-
-class FundingInstructions(models.Model):
-  """Django implementation of Stripe Funding Instructions.
-
-  Notes
-  -----
-
-  Stripe Docs: https://stripe.com/docs/api/issuing/funding_instructions
-
-  """
-
-  customer = models.OneToOneField(
-    Customer,
-    on_delete=models.CASCADE,
-    db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='funding_instructions',
-    verbose_name=_("Customer"),
-  )
-  account_holder_address = models.JSONField(
-    default=dict,
-    verbose_name=_("Account holder address"),
-  )
-  account_holder_name = models.CharField(
-    max_length=255,
-    verbose_name=_("Account holder name"),
-  )
-  account_number = models.CharField(
-    max_length=17,
-    verbose_name=_("Account number"),
-  )
-  account_type = models.CharField(
-    max_length=10,
-    verbose_name=_("Account type"),
-  )
-  bank_address = models.JSONField(
-    default=dict,
-    verbose_name=_("Bank address"),
-  )
-  bank_name = models.CharField(
-    max_length=255,
-    verbose_name=_("Bank name"),
-  )
-  routing_number = models.CharField(
-    max_length=9,
-    verbose_name=_("Routing number"),
-  )
-  swift_code = models.CharField(
-    max_length=11,
-    verbose_name=_("SWIFT code"),
-  )
-
-  objects = FundingInstructionsManager()
-
-  class Meta:
-    verbose_name = _("Funding Instructions")
-    verbose_name_plural = _("Funding Instructions")
-
-  @classmethod
-  def deserialize(
-    cls,
-    stripe_obj: stripe.FundingInstructions,
-  ) -> dict[str, Any]:
-    data: dict[str, Any] = {}
-    for fa in stripe_obj.bank_transfer.financial_addresses:
-      if (fa.type == 'aba') and (fa.aba is not None):
-        data.update({
-          'account_holder_address': dict(fa.aba.account_holder_address),
-          'account_holder_name': fa.aba.account_holder_name,
-          'account_number': fa.aba.account_number,
-          'account_type': fa.aba.account_type,
-          'bank_address': dict(fa.aba.bank_address),
-          'bank_name': fa.aba.bank_name,
-          'routing_number': fa.aba.routing_number,
-        })
-      elif (fa.type == 'swift') and (fa.swift is not None):
-        data['swift_code'] = fa.swift.swift_code
-
-    return data
 
 
 class Subscription(StripeModel[stripe.Subscription]):
@@ -1219,6 +1215,14 @@ class Subscription(StripeModel[stripe.Subscription]):
   cancel_at_period_end = models.BooleanField(
     verbose_name=_("Cancel at period end?"),
   )
+  collection_method = models.CharField(
+    max_length=20,
+    choices=COLLECTION_METHODS,
+    verbose_name=_("Collection method"),
+    help_text=_(
+      "Charge using the default source on file or email invoice with instructions"  # noqa: E501
+    ),
+  )
   customer = models.ForeignKey(
     Customer,
     on_delete=models.PROTECT,
@@ -1234,14 +1238,6 @@ class Subscription(StripeModel[stripe.Subscription]):
     blank=True,
     null=True,
     verbose_name=_("Default payment method"),
-  )
-  collection_method = models.CharField(
-    max_length=20,
-    choices=COLLECTION_METHODS,
-    verbose_name=_("Collection method"),
-    help_text=_(
-      "Charge using the default source on file or email invoice with instructions"  # noqa: E501
-    ),
   )
 
   class Meta(StripeModel.Meta):
@@ -1267,6 +1263,12 @@ class SubscriptionItem(StripeModel[stripe.SubscriptionItem]):
 
   """
 
+  current_period_start = models.DateTimeField(
+    verbose_name=_("Current period start"),
+  )
+  current_period_end = models.DateTimeField(
+    verbose_name=_("Current period end"),
+  )
   price = models.ForeignKey(
     Price,
     on_delete=models.PROTECT,
@@ -1276,12 +1278,6 @@ class SubscriptionItem(StripeModel[stripe.SubscriptionItem]):
   )
   quantity = models.PositiveIntegerField(
     verbose_name=_("Quantity"),
-  )
-  current_period_start = models.DateTimeField(
-    verbose_name=_("Current period start"),
-  )
-  current_period_end = models.DateTimeField(
-    verbose_name=_("Current period end"),
   )
   subscription = models.ForeignKey(
     Subscription,
@@ -1354,20 +1350,6 @@ class Invoice(StripeModel[stripe.Invoice]):
   number = models.CharField(
     max_length=255,
     verbose_name=_("Number"),
-  )
-  auto_advance = models.BooleanField(
-    verbose_name=_("Auto advance?"),
-    help_text=_(
-      "Controls whether Stripe will perform automatic collection of the invoice"  # noqa: E501
-    ),
-  )
-  collection_method = models.CharField(
-    max_length=20,
-    choices=COLLECTION_METHODS,
-    verbose_name=_("Collection method"),
-    help_text=_(
-      "Charge using the default source on file or email invoice with instructions"  # noqa: E501
-    ),
   )
   status = models.CharField(
     max_length=25,
@@ -1468,10 +1450,18 @@ class Invoice(StripeModel[stripe.Invoice]):
     ),
   )
   period_start = models.DateTimeField(
-    verbose_name=_("Created"),
+    verbose_name=_("Period start"),
   )
   period_end = models.DateTimeField(
-    verbose_name=_("Finalized"),
+    verbose_name=_("Period end"),
+  )
+  collection_method = models.CharField(
+    max_length=20,
+    choices=COLLECTION_METHODS,
+    verbose_name=_("Collection method"),
+    help_text=_(
+      "Charge using the default source on file or email invoice with instructions"  # noqa: E501
+    ),
   )
   invoice_pdf = models.URLField(
     max_length=255,
@@ -1540,22 +1530,15 @@ class InvoiceLineItem(StripeModel[stripe.StripeObject]):
 
   """
 
-  invoice = models.ForeignKey(
-    Invoice,
-    on_delete=models.CASCADE,
-    db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='lines',
-    verbose_name=_("Invoice"),
+  currency = models.CharField(
+    max_length=3,
+    choices=CURRENCIES,
+    verbose_name=_("Currency"),
   )
   amount = models.DecimalField(
     max_digits=8,
     decimal_places=2,
     verbose_name=_("Amount"),
-  )
-  currency = models.CharField(
-    max_length=3,
-    choices=CURRENCIES,
-    verbose_name=_("Currency"),
   )
   description = models.CharField(
     max_length=500,
@@ -1576,6 +1559,13 @@ class InvoiceLineItem(StripeModel[stripe.StripeObject]):
   proration = models.BooleanField(
     default=False,
     verbose_name=_("Proration?"),
+  )
+  invoice = models.ForeignKey(
+    Invoice,
+    on_delete=models.CASCADE,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
+    related_name='lines',
+    verbose_name=_("Invoice"),
   )
   price = models.ForeignKey(
     Price,
@@ -1643,12 +1633,18 @@ class InvoicePayment(StripeModel[stripe.StripeObject]):
     ('canceled', _("Canceled")),
   )
 
-  invoice = models.ForeignKey(
-    Invoice,
-    on_delete=models.CASCADE,
-    db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='payments',
-    verbose_name=_("Invoice"),
+  created = models.DateTimeField(
+    verbose_name=_("Created"),
+  )
+  status = models.CharField(
+    max_length=10,
+    choices=STATUSES,
+    verbose_name=_("Status"),
+  )
+  currency = models.CharField(
+    max_length=3,
+    choices=CURRENCIES,
+    verbose_name=_("Currency"),
   )
   amount_paid = models.DecimalField(
     max_digits=8,
@@ -1663,22 +1659,6 @@ class InvoicePayment(StripeModel[stripe.StripeObject]):
     decimal_places=2,
     verbose_name=_("Amount requested"),
   )
-  is_default = models.BooleanField(
-    verbose_name=_("Default?"),
-  )
-  status = models.CharField(
-    max_length=10,
-    choices=STATUSES,
-    verbose_name=_("Status"),
-  )
-  created = models.DateTimeField(
-    verbose_name=_("Created"),
-  )
-  currency = models.CharField(
-    max_length=3,
-    choices=CURRENCIES,
-    verbose_name=_("Currency"),
-  )
   payment_intent = models.ForeignKey(
     PaymentIntent,
     on_delete=models.SET_NULL,
@@ -1687,6 +1667,16 @@ class InvoicePayment(StripeModel[stripe.StripeObject]):
     blank=True,
     related_name='invoice_payments',
     verbose_name=_("Payment intent"),
+  )
+  invoice = models.ForeignKey(
+    Invoice,
+    on_delete=models.CASCADE,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
+    related_name='payments',
+    verbose_name=_("Invoice"),
+  )
+  is_default = models.BooleanField(
+    verbose_name=_("Default?"),
   )
 
   class Meta(StripeModel.Meta):
@@ -1718,10 +1708,6 @@ class BalanceTransaction(StripeModel[stripe.BalanceTransaction]):
 
   """
 
-  STATUSES = (
-    ('available', _("Available")),
-    ('pending', _("Pending")),
-  )
   TYPES = (
     ('adjustment', _("Adjustment")),
     ('advance', _("Advance")),
@@ -1756,7 +1742,26 @@ class BalanceTransaction(StripeModel[stripe.BalanceTransaction]):
     ('transfer_failure', _("Transfer failure")),
     ('transfer_refund', _("Transfer refund")),
   )
+  STATUSES = (
+    ('available', _("Available")),
+    ('pending', _("Pending")),
+  )
 
+  type = models.CharField(
+    max_length=50,
+    choices=TYPES,
+    verbose_name=_("Type"),
+  )
+  status = models.CharField(
+    max_length=10,
+    choices=STATUSES,
+    verbose_name=_("Status"),
+  )
+  currency = models.CharField(
+    max_length=3,
+    choices=CURRENCIES,
+    verbose_name=_("Currency"),
+  )
   amount = models.DecimalField(
     max_digits=8,
     decimal_places=2,
@@ -1765,11 +1770,6 @@ class BalanceTransaction(StripeModel[stripe.BalanceTransaction]):
       "Gross amount of this "
       "transaction"
     ),
-  )
-  currency = models.CharField(
-    max_length=3,
-    choices=CURRENCIES,
-    verbose_name=_("Currency"),
   )
   fee = models.DecimalField(
     max_digits=8,
@@ -1786,16 +1786,6 @@ class BalanceTransaction(StripeModel[stripe.BalanceTransaction]):
     help_text=_(
       "Net amount of this transaction"
     ),
-  )
-  status = models.CharField(
-    max_length=10,
-    choices=STATUSES,
-    verbose_name=_("Status"),
-  )
-  type = models.CharField(
-    max_length=50,
-    choices=TYPES,
-    verbose_name=_("Type"),
   )
   available_on = models.DateTimeField(
     verbose_name=_("Available on"),
@@ -1839,21 +1829,8 @@ class Charge(StripeModel[stripe.Charge]):
     ('failed', _("Failed")),
   )
 
-  amount = models.DecimalField(
-    max_digits=8,
-    decimal_places=2,
-    verbose_name=_("Amount"),
-    help_text=_(
-      "Total amount to be collected by this payment"
-    ),
-  )
   created = models.DateTimeField(
     verbose_name=_("Created"),
-  )
-  currency = models.CharField(
-    max_length=3,
-    choices=CURRENCIES,
-    verbose_name=_("Currency"),
   )
   description = models.CharField(
     max_length=255,
@@ -1863,19 +1840,30 @@ class Charge(StripeModel[stripe.Charge]):
       "Optional description that may be used to display information to customers"  # noqa: E501
     ),
   )
-  disputed = models.BooleanField(
-    verbose_name=_("Disputed?"),
-  )
-  refunded = models.BooleanField(
-    verbose_name=_("Refunded?"),
-    help_text=_(
-      "Only 'True' if the Charge has been fully refunded"
-    ),
-  )
   status = models.CharField(
     max_length=25,
     choices=STATUSES,
     verbose_name=_("Status"),
+  )
+  currency = models.CharField(
+    max_length=3,
+    choices=CURRENCIES,
+    verbose_name=_("Currency"),
+  )
+  amount = models.DecimalField(
+    max_digits=8,
+    decimal_places=2,
+    verbose_name=_("Amount"),
+    help_text=_(
+      "Total amount to be collected by this payment"
+    ),
+  )
+  receipt_email = models.EmailField(
+    verbose_name=_("Receipt email"),
+  )
+  billing_details = models.JSONField(
+    default=dict,
+    verbose_name=_("Billing details"),
   )
   customer = models.ForeignKey(
     Customer,
@@ -1900,8 +1888,14 @@ class Charge(StripeModel[stripe.Charge]):
     related_name='charges',
     verbose_name=_("Balance transaction"),
   )
-  receipt_email = models.EmailField(
-    verbose_name=_("Receipt email"),
+  disputed = models.BooleanField(
+    verbose_name=_("Disputed?"),
+  )
+  refunded = models.BooleanField(
+    verbose_name=_("Refunded?"),
+    help_text=_(
+      "Only 'True' if the Charge has been fully refunded"
+    ),
   )
 
   class Meta(StripeModel.Meta):
@@ -1942,19 +1936,6 @@ class Refund(StripeModel[stripe.Refund]):
     ('failed', _("Failed")),
   )
 
-  amount = models.DecimalField(
-    max_digits=8,
-    decimal_places=2,
-    verbose_name=_("Amount"),
-    help_text=_(
-      "Amount to be refunded"
-    ),
-  )
-  currency = models.CharField(
-    max_length=3,
-    choices=CURRENCIES,
-    verbose_name=_("Currency"),
-  )
   reason = models.CharField(
     max_length=25,
     choices=REASONS,
@@ -1967,6 +1948,19 @@ class Refund(StripeModel[stripe.Refund]):
     max_length=25,
     choices=STATUSES,
     verbose_name=_("Status"),
+  )
+  currency = models.CharField(
+    max_length=3,
+    choices=CURRENCIES,
+    verbose_name=_("Currency"),
+  )
+  amount = models.DecimalField(
+    max_digits=8,
+    decimal_places=2,
+    verbose_name=_("Amount"),
+    help_text=_(
+      "Amount to be refunded"
+    ),
   )
   charge = models.ForeignKey(
     Charge,

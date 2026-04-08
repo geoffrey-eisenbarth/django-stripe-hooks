@@ -38,19 +38,8 @@ class TestSpecializedModels:
     for field_name in ['created', 'expires_at']:
       if value := getattr(s_token, field_name):
         data[field_name] = dt.datetime.fromtimestamp(value, dt.UTC)
-
     if (pm := s_token.payment_method_preview) is not None:
       data['payment_method_preview'] = dict(pm)
-      if (card := pm.card) is not None:
-        data.update({
-          'card_brand': card.brand,
-          'card_exp_month': card.exp_month,
-          'card_exp_year': card.exp_year,
-          'card_last4': card.last4,
-        })
-      if (billing_details := pm.billing_details) is not None:
-        if (address := billing_details.address) is not None:
-          data['zip_code'] = address.postal_code or ''
 
     ConfirmationToken.objects.create(customer=d_customer, **data)
 
@@ -219,11 +208,26 @@ class TestModelProperties:
         id='ct_test',
         created=now,
         expires_at=now - dt.timedelta(days=1),
-        card_brand='visa',
-        card_exp_month=12,
-        card_exp_year=2030,
-        card_last4='4242',
-        zip_code='',
+        payment_method_preview={
+          'card': {
+            'brand': 'visa',
+            'last4': '4242',
+            'exp_month': 12,
+            'exp_year': 2030,
+          },
+          'billing_details': {
+            'name': 'Token Test',
+            'email': '',
+            'address': {
+              'line1': '',
+              'line2': '',
+              'city': '',
+              'state': '',
+              'postal_code': '',
+              'country': '',
+            },
+          },
+        },
         customer=customer,
       )
 

@@ -1,1 +1,3 @@
-- Add and test import management command
+- Verify webhook endpoints are being updated
+- What to do about unique email for Customer in TPG app?
+- Publish v0.2.0
