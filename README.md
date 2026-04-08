@@ -91,18 +91,19 @@ This exposes `https://yourdomain.com/stripe/webhooks/` as the webhook endpoint.
 
 If you prefer to use a custom URL (e.g. because you are [subclassing `StripeWebhooks`](#author-hooks)), see the [Custom URL](#custom-url) section below.
 
-### 5. Run the setup management command
+### 5. Run migrations
+
+```
+python manage.py migrate
+```
+
+### 6. Run the setup management command
 
 ```
 python manage.py setup_stripe
 ```
 
-This interactive command will:
-
-1. Detect your production domain(s) from `ALLOWED_HOSTS` and confirm the webhook URL.
-2. Walk through each supported model and let you choose which Stripe event types to subscribe to.
-3. Create (or update) the webhook endpoint in Stripe via the API.
-
+This interactive command will allow you to create, update, and manage your Stripe webhook endpoint directly from the command line.
 After creation, the command prints two values to add to your `settings.py`:
 
 ```python
@@ -113,12 +114,13 @@ STRIPE_WEBHOOK_SECRET_KEY  = "whsec_..." # used to verify incoming signatures
 > **Important:** `STRIPE_WEBHOOK_SECRET_KEY` is only returned once by Stripe. Copy it immediately.
 
 Re-run `python manage.py setup_stripe` any time you need to update the endpoint URL or event subscriptions.
-With `STRIPE_WEBHOOK_ENDPOINT_ID` set in your settings, it will update the existing endpoint rather than creating a new one.
 
-### 6. Run migrations
+## 7. Run the import management command (optional)
+
+If you have existing Stripe data that you want to import into your local database, run:
 
 ```
-python manage.py migrate
+python manage.py import_stripe_data
 ```
 
 ---
