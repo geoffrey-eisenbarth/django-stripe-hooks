@@ -20,8 +20,68 @@ T = TypeVar('T', bound=stripe.StripeObject)
 
 CURRENCIES = (
   ('', _("N/A")),
-  ('usd', _("US Dollars")),
+  ('usd', _("US Dollar")),
+  ('cad', _("Canadian Dollar")),
+  ('aud', _("Australian Dollar")),
+  ('nzd', _("New Zealand Dollar")),
+  ('sgd', _("Singapore Dollar")),
+  ('hkd', _("Hong Kong Dollar")),
+  ('eur', _("Euro")),
+  ('gbp', _("British Pound")),
+  ('chf', _("Swiss Franc")),
+  ('sek', _("Swedish Krona")),
+  ('nok', _("Norwegian Krone")),
+  ('dkk', _("Danish Krone")),
+  ('jpy', _("Japanese Yen")),
+  ('krw', _("South Korean Won")),
+  ('twd', _("New Taiwan Dollar")),
+  ('huf', _("Hungarian Forint")),
+  ('clp', _("Chilean Peso")),
+  ('isk', _("Icelandic Krona")),
 )
+
+CURRENCY_SYMBOL = {
+  'usd': '$',
+  'cad': '$',
+  'aud': '$',
+  'nzd': '$',
+  'sgd': '$',
+  'hkd': '$',
+  'eur': '€',
+  'gbp': '£',
+  'chf': 'Fr',
+  'sek': 'kr',
+  'nok': 'kr',
+  'dkk': 'kr',
+  'jpy': '¥',
+  'krw': '₩',
+  'twd': 'NT$',
+  'huf': 'Ft',
+  'clp': '$',
+  'isk': 'kr',
+}
+
+CURRENCY_DIVISOR = {
+  '': 1,
+  'usd': 100,
+  'cad': 100,
+  'aud': 100,
+  'nzd': 100,
+  'sgd': 100,
+  'hkd': 100,
+  'eur': 100,
+  'gbp': 100,
+  'chf': 100,
+  'sek': 100,
+  'nok': 100,
+  'dkk': 100,
+  'jpy': 1,
+  'krw': 1,
+  'twd': 1,
+  'huf': 1,
+  'clp': 1,
+  'isk': 1,
+}
 
 
 class StripeModel(models.Model, Generic[T]):
@@ -48,33 +108,12 @@ class StripeModel(models.Model, Generic[T]):
   class Meta:
     abstract = True
 
-  def __str__(self) -> str:
-    return f"{self.__class__.__name__} ({self.id})"
-
-  def save(self, *args: Any, **kwargs: Any) -> None:
-    if getattr(_write_depth, 'count', 0) == 0:
-      raise TypeError(
-        f"{self.__class__.__name__} is managed by Stripe. "
-        "Create and update objects via the Stripe SDK; "
-        "the local model is updated automatically when the webhook arrives. "
-        f"To sync immediately, call {self.__class__.__name__}.objects.from_stripe()."  # noqa: E501
-      )
-    super().save(*args, **kwargs)
-
-  def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
-    if getattr(_write_depth, 'count', 0) == 0:
-      raise TypeError(
-        f"{self.__class__.__name__} is managed by Stripe. "
-        "Delete objects via the Stripe SDK; the local model "
-        "is soft-deleted automatically when the webhook arrives."
-      )
-    return super().delete(*args, **kwargs)
-
   @classmethod
-  def stripe_clean(
+  def clean_stripe(
     cls,
     field: models.Field[Any, Any] | models.ForeignObjectRel,
     value: Any,
+    currency: str = '',
   ) -> Any:
     """Cleans a scalar value from the Stripe API for a Django field."""
     if isinstance(field, models.CharField):
@@ -95,7 +134,7 @@ class StripeModel(models.Model, Generic[T]):
       if value is None:
         value = None if field.null else Decimal(0)
       else:
-        value = Decimal(value / 100)
+        value = Decimal(value / CURRENCY_DIVISOR[currency])
     elif isinstance(field, models.JSONField):
       if value is None:
         value = None if field.null else field.default()
@@ -140,9 +179,32 @@ class StripeModel(models.Model, Generic[T]):
         data[field.name] = [getattr(v, 'id', v) for v in value]
 
       else:
-        data[field.name] = cls.stripe_clean(field, value)
+        currency = stripe_obj.get('currency', '')
+        data[field.name] = cls.clean_stripe(field, value, currency=currency)
 
     return data
+
+  def __str__(self) -> str:
+    return self.id
+
+  def save(self, *args: Any, **kwargs: Any) -> None:
+    if getattr(_write_depth, 'count', 0) == 0:
+      raise TypeError(
+        f"{self.__class__.__name__} is managed by Stripe. "
+        "Create and update objects via the Stripe SDK; "
+        "the local model is updated automatically when the webhook arrives. "
+        f"To sync immediately, call {self.__class__.__name__}.objects.from_stripe()."  # noqa: E501
+      )
+    super().save(*args, **kwargs)
+
+  def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
+    if getattr(_write_depth, 'count', 0) == 0:
+      raise TypeError(
+        f"{self.__class__.__name__} is managed by Stripe. "
+        "Delete objects via the Stripe SDK; the local model "
+        "is soft-deleted automatically when the webhook arrives."
+      )
+    return super().delete(*args, **kwargs)
 
 
 class Product(StripeModel[stripe.Product]):
@@ -1452,13 +1514,14 @@ class Invoice(StripeModel[stripe.Invoice]):
       elif isinstance(stripe_sub, str):
         data['subscription_id'] = stripe_sub
 
+    divisor = CURRENCY_DIVISOR[stripe_obj.currency]
     data['total_discounts_amount'] = Decimal(0)
     for discount in (stripe_obj.total_discount_amounts or []):
-      data['total_discounts_amount'] -= Decimal(discount.amount / 100)
+      data['total_discounts_amount'] -= Decimal(discount.amount / divisor)
 
     data['total_taxes_amount'] = Decimal(0)
     for tax in (stripe_obj.total_taxes or []):
-      data['total_taxes_amount'] += Decimal(tax.amount / 100)
+      data['total_taxes_amount'] += Decimal(tax.amount / divisor)
 
     return data
 

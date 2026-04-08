@@ -322,6 +322,7 @@ class TestDeserializeEdgeCases:
 
     stripe_obj = stripe.Invoice.construct_from({
       'parent': None,
+      'currency': 'usd',
       'total_discount_amounts': [],
       'total_taxes': [{'amount': 100}]
     }, 'key')
@@ -333,6 +334,7 @@ class TestDeserializeEdgeCases:
 
     stripe_obj = stripe.Invoice.construct_from({
       'parent': {'subscription_details': {'subscription': 'sub_test'}},
+      'currency': 'usd',
       'total_discount_amounts': [],
       'total_taxes': [],
     }, 'key')
