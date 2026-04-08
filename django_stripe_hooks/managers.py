@@ -1,8 +1,9 @@
-from typing import TYPE_CHECKING, TypeVar, TypeGuard, Any
+from typing import TYPE_CHECKING, TypeVar, TypeGuard, Any, Literal
 import threading
 
 import stripe
 
+from django.conf import settings
 from django.db import models, transaction
 
 
@@ -42,6 +43,13 @@ PostSave = dict[
   models.ManyToOneRel | models.ManyToManyField[Any, Any],
   list[str | stripe.StripeObject]
 ]
+BankTransferType = Literal[
+  'eu_bank_transfer',
+  'gb_bank_transfer',
+  'jp_bank_transfer',
+  'mx_bank_transfer',
+  'us_bank_transfer',
+]
 
 
 def is_stripe_model(
@@ -58,9 +66,19 @@ class FundingInstructionsManager(models.Manager['FundingInstructions']):
   def from_stripe(
     self,
     customer: 'Customer',
-    stripe_obj: stripe.FundingInstructions,
+    bank_transfer_type: BankTransferType,
+    currency: str,
   ) -> 'FundingInstructions':
-    """Updates or creates FundingInstructions from a Stripe API object."""
+    """Retrieves details from Stripe API and updates or creates object."""
+    stripe_client = stripe.StripeClient(settings.STRIPE_SECRET_KEY)
+    stripe_obj = stripe_client.v1.customers.funding_instructions.create(
+      customer.id,
+      params={
+        'funding_type': 'bank_transfer',
+        'bank_transfer': {'type': bank_transfer_type},
+        'currency': currency,
+      },
+    )
     data = self.model.deserialize(stripe_obj)
     django_obj, created = self.update_or_create(
       customer=customer,

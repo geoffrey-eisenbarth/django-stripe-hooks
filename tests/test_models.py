@@ -61,15 +61,11 @@ class TestSpecializedModels:
     })
     d_customer = Customer.objects.from_stripe(s_customer)
 
-    s_fi = self.stripe_client.v1.customers.funding_instructions.create(
-      s_customer.id,
-      params={
-        'funding_type': 'bank_transfer',
-        'bank_transfer': {'type': 'us_bank_transfer'},
-        'currency': 'usd',
-      },
+    d_fi = FundingInstructions.objects.from_stripe(
+      d_customer,
+      bank_transfer_type='us_bank_transfer',
+      currency='usd',
     )
-    d_fi = FundingInstructions.objects.from_stripe(d_customer, s_fi)
 
     assert d_fi.customer.id == d_customer.id
 
