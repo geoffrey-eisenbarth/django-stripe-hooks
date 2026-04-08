@@ -141,7 +141,6 @@ class StripeAdminTest(TestCase):
         id='in_test',
         created=NOW,
         number='INV-001',
-        auto_advance=True,
         collection_method='charge_automatically',
         status='paid',
         currency='usd',
@@ -224,7 +223,7 @@ class StripeAdminTest(TestCase):
     invoice = Invoice.objects.get(id='in_test')
     inline = InvoiceInline(Customer, admin.site)
 
-    pdf_html = inline.pdf_link(invoice)
+    pdf_html = inline.pdf(invoice)
     assert 'href' in pdf_html
     assert 'PDF' in pdf_html
 
