@@ -15,6 +15,7 @@ If you need the local instance immediately (e.g. in the same request context, wi
 ```python
 stripe_customer = stripe_client.v1.customers.create(params={...})
 customer = Customer.objects.from_stripe(stripe_customer)  # synced immediately
+```
 
 This library facilitates Stripe integration.
 Always test thoroughly in Stripe's test mode before deploying to production.
