@@ -4,6 +4,7 @@ from django.contrib import admin
 from django.db import models
 from django.http import HttpRequest
 from django.urls import reverse
+from django.utils.formats import date_format
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from django.utils.translation import gettext_lazy as _
@@ -96,7 +97,7 @@ def get_related_link(
         f"admin:{other._meta.app_label}_{other._meta.model_name}_change",
         args=[other.pk],
       ),
-      display=getattr(other, display_field),
+      display=getattr(other, display_field) or other.id,
     )
   else:
     html = mark_safe("N/A")
@@ -337,7 +338,7 @@ class DiscountAdmin(StripeModelAdmin[Discount]):
 
   @admin.display(description=_("Invoice"), ordering='invoice')
   def invoice_link(self, obj: Discount) -> str:
-    return get_related_link(obj, 'invoice')
+    return get_related_link(obj, 'invoice', display_field='number')
 
 
 class SubscriptionMixin:
@@ -358,7 +359,7 @@ class SubscriptionMixin:
 
   @admin.display(description=_("Default Payment Method"), ordering='default_payment_method')  # noqa: E501
   def default_payment_method_link(self, obj: Subscription) -> str:
-    return get_related_link(obj, 'default_payment_method')
+    return get_related_link(obj, 'default_payment_method', display_field='card_info')  # noqa: E501
 
 
 class SubscriptionInline(
@@ -368,30 +369,38 @@ class SubscriptionInline(
   model = Subscription
   select_related = ('default_payment_method', )
   extra = 0
-  exclude = (
-    'id',
-    'metadata',
-    'status',
-    'default_payment_method',
+  fields = (
+    'status_display',
+    'current_period_start_display',
+    'current_period_end_display',
+    'collection_method',
+    'default_payment_method_link',
+    'cancel_at_period_end',
   )
   readonly_fields = (
     'status_display',
-    'current_period_start',
-    'current_period_end',
-    'collection_method',
+    'current_period_start_display',
+    'current_period_end_display',
     'cancel_at_period_end',
     'default_payment_method_link',
   )
+
+  @admin.display(description=_("Current Period Start"))
+  def current_period_start_display(self, obj: Subscription) -> str:
+    return date_format(obj.current_period_start, 'DATETIME_FORMAT')
+
+  @admin.display(description=_("Current Period End"))
+  def current_period_end_display(self, obj: Subscription) -> str:
+    return date_format(obj.current_period_end, 'DATETIME_FORMAT')
 
 
 class PaymentMethodInline(StripeModelInline[PaymentMethod, Customer]):
   model = PaymentMethod
   extra = 0
-  exclude = (
-    'id',
-    'metadata',
-    'card',
-    'billing_details',
+  fields = (
+    'type',
+    'card_info',
+    'billing_details_display',
   )
   readonly_fields = ('card_info', 'billing_details_display')
 
@@ -442,8 +451,8 @@ class InvoiceMixin:
     )
     return html
 
-  @admin.display(description=_("Link"))
-  def link(self, obj: Invoice) -> str:
+  @admin.display(description=_("Portal"))
+  def portal(self, obj: Invoice) -> str:
     html = format_html(
       '<a href="{url}">Link</a>',
       url=obj.hosted_invoice_url,
@@ -466,9 +475,9 @@ class InvoiceInline(
     'period_end',
     'collection_method',
     'pdf',
-    'link',
+    'portal',
   )
-  readonly_fields = ('total_display', 'pdf', 'link')
+  readonly_fields = ('total_display', 'pdf', 'portal')
 
 
 @admin.register(Customer)
@@ -581,7 +590,7 @@ class PaymentIntentAdmin(StripeModelAdmin[PaymentIntent]):
 
   @admin.display(description=_("Payment Method"), ordering='payment_method')
   def payment_method_link(self, obj: PaymentIntent) -> str:
-    return get_related_link(obj, 'payment_method')
+    return get_related_link(obj, 'payment_method', display_field='card_info')
 
 
 @admin.register(ConfirmationToken)
@@ -608,16 +617,17 @@ class SubscriptionAdmin(SubscriptionMixin, StripeModelAdmin[Subscription]):
     'customer__name',
     'customer__phone',
   )
+
   list_display_links = ('id', )
   list_display = (
     'id',
-    'customer_link',
     'status_display',
     'current_period_start',
     'current_period_end',
     'collection_method',
-    'cancel_at_period_end',
+    'customer_link',
     'default_payment_method_link',
+    'cancel_at_period_end',
   )
   list_select_related = (
     'customer',
@@ -646,7 +656,7 @@ class InvoiceAdmin(InvoiceMixin, StripeModelAdmin[Invoice]):
     'period_end',
     'collection_method',
     'pdf',
-    'link',
+    'portal',
     'customer_link',
     'subscription_link',
   )
@@ -694,7 +704,7 @@ class InvoicePaymentAdmin(StripeModelAdmin[InvoicePayment]):
 
   @admin.display(description=_("Invoice"), ordering='invoice')
   def invoice_link(self, obj: InvoicePayment) -> str:
-    return get_related_link(obj, 'invoice')
+    return get_related_link(obj, 'invoice', display_field='number')
 
 
 @admin.register(BalanceTransaction)
