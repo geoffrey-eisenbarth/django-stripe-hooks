@@ -227,7 +227,7 @@ class StripeAdminTest(TestCase):
     assert 'href' in pdf_html
     assert 'PDF' in pdf_html
 
-    link_html = inline.link(invoice)
+    link_html = inline.portal(invoice)
     assert 'href' in link_html
     assert 'Link' in link_html
 
