@@ -1,6 +1,6 @@
 [project]
 name = 'django-stripe-hooks'
-version = '0.2.0.dev1'
+version = '0.2.0.dev2'
 description = 'Webhooks for syncing Stripe payment data to your Django database.'
 authors = [
     {name = 'Geoffrey Eisenbarth',email = 'geoffrey.eisenbarth@gmail.com'}
