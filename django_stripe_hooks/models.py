@@ -116,7 +116,7 @@ class StripeModel(models.Model, Generic[T]):
     currency: str = '',
   ) -> Any:
     """Cleans a scalar value from the Stripe API for a Django field."""
-    if isinstance(field, models.CharField):
+    if isinstance(field, (models.CharField, models.TextField)):
       if (value is None) and not field.null:
         value = ''
     elif isinstance(field, models.DateTimeField):
@@ -124,6 +124,11 @@ class StripeModel(models.Model, Generic[T]):
         pass
       else:
         value = dt.datetime.fromtimestamp(value, tz=dt.timezone.utc)
+    elif isinstance(field, models.DateField):
+      if field.null and (value is None):
+        pass
+      else:
+        value = dt.date.fromtimestamp(value)
     elif isinstance(field, models.BooleanField):
       if (value is None) and not field.null:
         value = False
@@ -891,9 +896,11 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
   )
   customer = models.ForeignKey(
     Customer,
-    on_delete=models.CASCADE,
+    on_delete=models.SET_NULL,
     db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='payment_methods',
+    null=True,
+    blank=True,
     verbose_name=_("Customer"),
   )
 
@@ -1886,6 +1893,8 @@ class Charge(StripeModel[stripe.Charge]):
     on_delete=models.PROTECT,
     db_constraint=False,  # Stripe webhooks may arrive out of order
     related_name='charges',
+    null=True,
+    blank=True,
     verbose_name=_("Balance transaction"),
   )
   disputed = models.BooleanField(
