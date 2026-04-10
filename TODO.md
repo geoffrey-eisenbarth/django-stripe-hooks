@@ -1,3 +1,7 @@
 - Verify webhook endpoints are being updated
-- What to do about unique email for Customer in TPG app?
+- admin.py TODOs (Detail views)
+- AddressField? PrettyJSONField?
+- separators in Money str
+- Why is "details" added to ChangeView?
+- Squash migrations
 - Publish v0.2.0
