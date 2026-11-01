@@ -8,7 +8,6 @@ from django.test import TestCase, RequestFactory
 from django.urls import reverse
 from django.contrib.auth import get_user_model
 
-from django_stripe_hooks.admin import InvoiceInline
 from django_stripe_hooks.managers import allow_stripe_write
 from django_stripe_hooks.models import (
   StripeModel, Product, Price, Coupon, PromotionCode,
@@ -101,7 +100,7 @@ class StripeAdminTest(TestCase):
         amount=100.00,
         currency='usd',
         fee=2.00,
-        net=0.00,  # Covers the `amount == 0` branch in _currency_display
+        net=0.00,
         status='available',
         type='charge',
         available_on=NOW,
@@ -109,7 +108,7 @@ class StripeAdminTest(TestCase):
       BalanceTransaction.objects.create(
         id='txn_eur',
         amount=50.00,
-        currency='eur',  # Covers the non-USD branch in _currency_display
+        currency='eur',
         fee=1.00,
         net=49.00,
         status='available',
@@ -176,8 +175,6 @@ class StripeAdminTest(TestCase):
         current_period_end=NOW + dt.timedelta(days=30),
         subscription=subscription,
       )
-      # Second subscription with cancel_at_period_end=True covers that branch
-      # in SubscriptionAdmin.status_verbose.
       canceling_sub = Subscription.objects.create(
         id='sub_canceling',
         status='active',
@@ -216,20 +213,6 @@ class StripeAdminTest(TestCase):
     )
     response = self.client.get(url)
     assert response.status_code == 200
-
-  def test_invoice_inline_display_methods(self) -> None:
-    """Call InvoiceInline display methods directly."""
-
-    invoice = Invoice.objects.get(id='in_test')
-    inline = InvoiceInline(Customer, admin.site)
-
-    pdf_html = inline.pdf(invoice)
-    assert 'href' in pdf_html
-    assert 'PDF' in pdf_html
-
-    link_html = inline.portal(invoice)
-    assert 'href' in link_html
-    assert 'Link' in link_html
 
   def test_admin_permissions(self) -> None:
     """Verify that all StripeModel admins are read-only."""

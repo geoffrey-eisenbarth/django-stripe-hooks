@@ -194,13 +194,13 @@ class TestModelProperties:
       PaymentMethod.objects.create(
         id='pm_card',
         type='card',
-        card={'brand': 'visa', 'last4': '4242'},
+        details={'brand': 'visa', 'last4': '4242'},
         customer=customer,
       )
       PaymentMethod.objects.create(
         id='pm_empty',
         type='card',
-        card={},
+        details={},
         customer=customer,
       )
       now = dt.datetime(2025, 1, 1, tzinfo=dt.UTC)
@@ -209,6 +209,7 @@ class TestModelProperties:
         created=now,
         expires_at=now - dt.timedelta(days=1),
         payment_method_preview={
+          'type': 'card',
           'card': {
             'brand': 'visa',
             'last4': '4242',
@@ -232,26 +233,14 @@ class TestModelProperties:
       )
 
   def test_confirmation_token_properties(self) -> None:
-    """ConfirmationToken.is_expired and card_info properties."""
+    """ConfirmationToken.is_expired and __str__ properties."""
 
     token = ConfirmationToken.objects.get(id='ct_test')
 
     assert token.is_expired is True
 
-    info = token.card_info
-    assert 'Visa' in info
-    assert '4242' in info
-
-  def test_payment_method_card_info(self) -> None:
-    """PaymentMethod.card_info with and without card data."""
-
-    pm_card = PaymentMethod.objects.get(id='pm_card')
-    info = pm_card.card_info
-    assert 'Visa' in info
-    assert '4242' in info
-
-    pm_empty = PaymentMethod.objects.get(id='pm_empty')
-    assert pm_empty.card_info == ''
+    assert 'Visa' in str(token)
+    assert '4242' in str(token)
 
 
 class TestDeserializeEdgeCases:

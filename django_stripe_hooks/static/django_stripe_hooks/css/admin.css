@@ -1,0 +1,44 @@
+table#result_list {
+  & .column-amount,
+  & .column-amount_due,
+  & .column-amount_off,
+  & .column-amount_overpaid,
+  & .column-amount_paid,
+  & .column-amount_remaining,
+  & .column-amount_requested,
+  & .column-amount_shipping,
+  & .column-fee,
+  & .column-flat_amount,
+  & .column-net,
+  & .column-subtotal,
+  & .column-subtotal_excluding_tax,
+  & .column-total,
+  & .column-total_discounts_amount,
+  & .column-total_excluding_tax,
+  & .column-total_taxes_amount,
+  & .column-unit_amount {
+    text-align: right;
+  }
+
+  & .field-amount,
+  & .field-amount_due,
+  & .field-amount_off,
+  & .field-amount_overpaid,
+  & .field-amount_paid,
+  & .field-amount_remaining,
+  & .field-amount_requested,
+  & .field-amount_shipping,
+  & .field-fee,
+  & .field-flat_amount,
+  & .field-net,
+  & .field-subtotal,
+  & .field-subtotal_excluding_tax,
+  & .field-total,
+  & .field-total_discounts_amount,
+  & .field-total_excluding_tax,
+  & .field-total_taxes_amount,
+  & .field-unit_amount {
+    text-align: right;
+    white-space: nowrap;
+  }
+}

@@ -16,6 +16,11 @@ class StripeConfig(AppConfig):
   verbose_name = _('Stripe Payments')
 
   def ready(self) -> None:
+    # Patch admin display_for_field to support our custom fields and formats
+    from django_stripe_hooks import display
+    display.patch()
+
+    # Check that required settings are defined
     for value in REQUIRED_SETTINGS:
       if not hasattr(settings, value):
         message = _(

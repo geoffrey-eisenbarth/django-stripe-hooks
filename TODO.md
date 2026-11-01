@@ -1,6 +1,7 @@
 - Verify webhook endpoints are being updated
 - admin.py TODOs (Detail views)
 - AddressField? PrettyJSONField?
+- SubscriptionItems don't show in SubscriptionDetailView, InvoiceLine / InvoicePayment in Invoice Detail
 - separators in Money str
 - Why is "details" added to ChangeView?
 - Squash migrations

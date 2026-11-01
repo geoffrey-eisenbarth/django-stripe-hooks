@@ -1,16 +1,14 @@
-from typing import TypeVar, Any
+from typing import Any, Callable, ClassVar, TypeVar, Generic
 
 from django.contrib import admin
+from django.core.exceptions import FieldDoesNotExist
 from django.db import models
 from django.http import HttpRequest
 from django.urls import reverse
-from django.utils.formats import date_format
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from django.utils.translation import gettext_lazy as _
-
 from django_stripe_hooks.models import (
-  CURRENCY_SYMBOL,
   Product, Price, PriceTier,
   Coupon, PromotionCode, Discount,
   Customer, Subscription,
@@ -20,88 +18,11 @@ from django_stripe_hooks.models import (
 )
 
 
-ParentModelT = TypeVar("ParentModelT", bound=models.Model)
-ChildModelT = TypeVar("ChildModelT", bound=models.Model)
+ParentModelT = TypeVar('ParentModelT', bound=models.Model)
+ChildModelT = TypeVar('ChildModelT', bound=models.Model)
 
-
-def get_currency_display(
-  obj: ParentModelT,
-  field: str,
-  show_sign: bool = False,
-  currency: str = '',
-) -> str:
-  """Displays currency-related fields."""
-  amount = getattr(obj, field)
-  if show_sign:
-    if field == 'fee' or amount < 0:
-      sign = '-'
-    elif amount > 0:
-      sign = '+'
-    elif amount == 0:
-      sign = ''
-  else:
-    sign = ''
-
-  currency = getattr(obj, 'currency', currency)
-  symbol = CURRENCY_SYMBOL.get(currency, '')
-  s = f"{sign}{symbol}{abs(amount)} {currency.upper()}"
-  return s.strip()
-
-
-def get_address_display(
-  address: dict[str, Any],
-) -> str:
-  """Formats addresses for display."""
-  city = address.get('city')
-  state = address.get('state')
-  postal_code = address.get('postal_code')
-  if city and state and postal_code:
-    address['line3'] = f"{city}, {state} {postal_code}"
-  elif city and state:
-    address['line3'] = f"{city}, {state} {postal_code}"
-  elif postal_code:
-    address['line3'] = postal_code
-  else:
-    address['line3'] = None
-
-  lines = '<br>'.join(
-    filter(None, [
-      address.get('line1'),
-      address.get('line2'),
-      address.get('line3'),
-      address.get('country'),
-    ])
-  )
-  if lines:
-    html = format_html(
-      '<address style="font-size: 0.8em;">'
-      '{lines}'
-      '</address>',
-      lines=mark_safe(lines),
-    )
-  else:
-    html = mark_safe("N/A")
-  return html
-
-
-def get_related_link(
-  obj: ParentModelT,
-  related_field: str,
-  display_field: str = 'id',
-) -> str:
-  """Helper to generate admin links for related objects."""
-  if other := getattr(obj, related_field):
-    html = format_html(
-      '<a href="{url}">{display}</a>',
-      url=reverse(
-        f"admin:{other._meta.app_label}_{other._meta.model_name}_change",
-        args=[other.pk],
-      ),
-      display=getattr(other, display_field) or other.id,
-    )
-  else:
-    html = mark_safe("N/A")
-  return html
+# Matches django-stubs' _ListOrTuple[str] for admin field options.
+_Fields = list[str] | tuple[str, ...] | tuple[()]
 
 
 class StripeModelAdmin(admin.ModelAdmin[ParentModelT]):
@@ -114,7 +35,16 @@ class StripeModelAdmin(admin.ModelAdmin[ParentModelT]):
 
   """
 
-  list_display_links: tuple[str] | None = None
+  list_display_links: tuple[str, ...] | None = None
+  exclude: ClassVar[_Fields | None] = (
+    'metadata',
+    'currency',
+  )
+
+  class Media:
+    css = {
+      'all': ('django_stripe_hooks/css/admin.css', )
+    }
 
   def has_add_permission(
     self,
@@ -136,8 +66,46 @@ class StripeModelAdmin(admin.ModelAdmin[ParentModelT]):
   ) -> bool:
     return False
 
+  def __getattr__(self, name: str) -> Callable[[Any], str]:
+    """Support `{field}_link` in list_display to generate FK admin links."""
+    if name == 'model' or not name.endswith('_link'):
+      raise AttributeError(name)
+    field_name = name.removesuffix('_link')
+    try:
+      field = self.model._meta.get_field(field_name)
+    except FieldDoesNotExist:
+      raise AttributeError(name)
+    if not isinstance(field, models.ForeignKey):
+      raise AttributeError(name)
 
-class StripeModelInline(admin.TabularInline[ChildModelT, ParentModelT]):
+    @admin.display(description=field_name.replace('_', ' ').title())
+    def fn(obj: Any) -> str:
+      s = mark_safe('-')
+      if (other := getattr(obj, field_name, None)):
+        s = format_html(
+          '<a href="{url}">{text}</a>',
+          url=reverse(
+            f'admin:{other._meta.app_label}_{other._meta.model_name}_change',
+            args=[other.pk],
+          ),
+          text='View' if str(other) == other.pk else str(other),
+        )
+      return s
+    return fn
+
+  @admin.display(description=_("Details"))
+  def detail_link(self, obj: ChildModelT) -> str:
+    url = reverse(
+      f'admin:{obj._meta.app_label}_{obj._meta.model_name}_change',
+      args=[obj.pk],
+    )
+    return format_html('<a href="{}">View</a>', url)
+
+
+class StripeModelInline(
+  admin.TabularInline[ChildModelT, ParentModelT],
+  Generic[ChildModelT, ParentModelT],
+):
   """Inline ModelAdmin for Stripe models.
 
   Notes
@@ -147,7 +115,11 @@ class StripeModelInline(admin.TabularInline[ChildModelT, ParentModelT]):
 
   """
 
-  select_related: tuple[str] | None = None
+  select_related: tuple[str, ...] | None = None
+
+  readonly_fields: ClassVar[_Fields] = (
+    'detail_link',
+  )
 
   def has_add_permission(
     self,
@@ -176,15 +148,51 @@ class StripeModelInline(admin.TabularInline[ChildModelT, ParentModelT]):
       qs = qs.select_related(*self.select_related)
     return qs
 
+  @admin.display(description=_("Details"))
+  def detail_link(self, obj: ChildModelT) -> str:
+    url = reverse(
+      f'admin:{obj._meta.app_label}_{obj._meta.model_name}_change',
+      args=[obj.pk],
+    )
+    return format_html('<a href="{}">View</a>', url)
+
+
+class PriceInline(StripeModelInline[Price, Product]):
+  model = Price
+  select_related = ('product', )
+  extra = 0
+  fields = (
+    'nickname',
+    'unit_amount',
+    'billing_scheme',
+    'usage_type',
+    'tiers_mode',
+    'active',
+  )
+  readonly_fields = (
+    'recurring',
+    'detail_link',
+  )
+
 
 @admin.register(Product)
 class ProductAdmin(StripeModelAdmin[Product]):
+  search_fields = (
+    'name',
+  )
+  list_display_links = ('name', )
   list_display = (
     'name',
-    'description',
-    'statement_descriptor',
     'active',
     'deleted',
+  )
+  list_filter = (
+    'active',
+    'deleted',
+  )
+
+  inlines = (
+    PriceInline,
   )
 
 
@@ -193,71 +201,47 @@ class PriceTierInline(StripeModelInline[PriceTier, Price]):
   extra = 0
   fields = (
     'up_to',
-    'flat_amount_display',
-    'unit_amount_display',
-    'price_link',
+    'flat_amount',
+    'unit_amount',
+    'price',
   )
-  readonly_fields = (
-    'flat_amount_display',
-    'unit_amount_display',
-    'price_link',
-  )
-
-  @admin.display(description=_("Flat Amount"), ordering='flat_amount')
-  def flat_amount_display(self, obj: PriceTier) -> str:
-    return get_currency_display(obj, 'flat_amount')
-
-  @admin.display(description=_("Unit Amount"), ordering='unit_amount')
-  def unit_amount_display(self, obj: PriceTier) -> str:
-    return get_currency_display(obj, 'unit_amount')
-
-  @admin.display(description=_("Price"), ordering='price')
-  def price_link(self, obj: PriceTier) -> str:
-    return get_related_link(obj, 'price', display_field='nickname')
 
 
 @admin.register(Price)
 class PriceAdmin(StripeModelAdmin[Price]):
-  list_display_links = ('nickname', )
+  list_display_links = (
+    'nickname',
+  )
   list_display = (
     'nickname',
-    'unit_amount_display',
+    'unit_amount',
     'billing_scheme',
-    'recurring_display',
+    'recurring',
     'usage_type',
     'tiers_mode',
     'product_link',
     'active',
   )
-  list_select_related = ('product', )
+  list_select_related = (
+    'product',
+  )
+  list_filter = (
+    'billing_scheme',
+    'usage_type',
+    'tiers_mode',
+    'active',
+  )
 
   inlines = (PriceTierInline, )
-
-  @admin.display(description=_("Recurring"))
-  def recurring_display(self, obj: Price) -> str:
-    if obj.type == 'recurring':
-      if obj.interval_count == 1:
-        s = f"Every {obj.interval}"
-      else:
-        s = f"Every {obj.interval_count} {obj.interval}s"
-    else:
-      s = "One-time charge"
-    return s
-
-  @admin.display(description=_("Unit Price"), ordering='unit_amount')
-  def unit_amount_display(self, obj: Price) -> str:
-    return get_currency_display(obj, 'unit_amount')
-
-  @admin.display(description=_("Product"), ordering='product')
-  def product_link(self, obj: Price) -> str:
-    return get_related_link(obj, 'product', display_field='name')
 
 
 @admin.register(Coupon)
 class CouponAdmin(StripeModelAdmin[Coupon]):
-  list_display_links = ('id', )
+  search_fields = (
+    'name',
+  )
+  list_display_links = ('name', )
   list_display = (
-    'id',
     'name',
     'terms',
     'redemptions',
@@ -269,6 +253,9 @@ class CouponAdmin(StripeModelAdmin[Coupon]):
 
 @admin.register(PromotionCode)
 class PromotionCodeAdmin(StripeModelAdmin[PromotionCode]):
+  search_fields = (
+    'code',
+  )
   list_display = (
     'code',
     'redemptions',
@@ -282,32 +269,25 @@ class PromotionCodeAdmin(StripeModelAdmin[PromotionCode]):
     'customer',
   )
 
-  @admin.display(description=_("Terms"))
-  def coupon__terms(self, obj: PromotionCode) -> str:
-    return obj.coupon.terms
-
-  @admin.display(description=_("Customer"), ordering='customer')
-  def customer_link(self, obj: PromotionCode) -> str:
-    return get_related_link(obj, 'customer')
-
-  @admin.display(description=_("Coupon"), ordering='coupon')
-  def coupon_link(self, obj: PromotionCode) -> str:
-    return get_related_link(obj, 'coupon', display_field='terms')
-
 
 @admin.register(Discount)
 class DiscountAdmin(StripeModelAdmin[Discount]):
+  search_fields = (
+    'customer__name',
+    'promotion_code__code',
+  )
   list_display = (
+    'customer_link',
     'start',
     'end',
     'coupon_link',
     'promotion_code_link',
-    'customer_link',
     'subscription_link',
     'subscription_item_link',
     'invoice_link',
   )
   list_select_related = (
+    'customer',
     'coupon',
     'promotion_code',
     'customer',
@@ -316,97 +296,35 @@ class DiscountAdmin(StripeModelAdmin[Discount]):
     'invoice',
   )
 
-  @admin.display(description=_("Coupon"), ordering='coupon')
-  def coupon_link(self, obj: Discount) -> str:
-    return get_related_link(obj, 'coupon', display_field='terms')
-
-  @admin.display(description=_("Promotion Code"), ordering='promotion_code')
-  def promotion_code_link(self, obj: Discount) -> str:
-    return get_related_link(obj, 'promotion_code', display_field='code')
-
-  @admin.display(description=_("Customer"), ordering='customer')
-  def customer_link(self, obj: Discount) -> str:
-    return get_related_link(obj, 'customer')
-
-  @admin.display(description=_("Subscription"), ordering='subscription')
-  def subscription_link(self, obj: Discount) -> str:
-    return get_related_link(obj, 'subscription')
-
-  @admin.display(description=_("Subscription Item"), ordering='subscription_item')  # noqa: E501
-  def subscription_item_link(self, obj: Discount) -> str:
-    return get_related_link(obj, 'subscription_item')
-
-  @admin.display(description=_("Invoice"), ordering='invoice')
-  def invoice_link(self, obj: Discount) -> str:
-    return get_related_link(obj, 'invoice', display_field='number')
-
-
-class SubscriptionMixin:
-  @admin.display(description=_("Status"), ordering='status')
-  def status_display(self, obj: Subscription) -> str:
-    if obj.cancel_at_period_end:
-      status = 'cancels'
-    else:
-      status = obj.status
-
-    text = {
-      k: str(v) for k, v in Subscription.STATUSES
-    } | {
-      'active': f'Renews {obj.current_period_end:%b %d, %Y}',
-      'cancels': f'Cancels {obj.current_period_end:%b %d, %Y}',
-    }
-    return text[status]
-
-  @admin.display(description=_("Default Payment Method"), ordering='default_payment_method')  # noqa: E501
-  def default_payment_method_link(self, obj: Subscription) -> str:
-    return get_related_link(obj, 'default_payment_method', display_field='card_info')  # noqa: E501
-
 
 class SubscriptionInline(
-  SubscriptionMixin,
   StripeModelInline[Subscription, Customer]
 ):
   model = Subscription
   select_related = ('default_payment_method', )
   extra = 0
   fields = (
-    'status_display',
-    'current_period_start_display',
-    'current_period_end_display',
+    'detail_link',
+    'status',
     'collection_method',
-    'default_payment_method_link',
+    'default_payment_method',
     'cancel_at_period_end',
   )
   readonly_fields = (
-    'status_display',
-    'current_period_start_display',
-    'current_period_end_display',
-    'cancel_at_period_end',
-    'default_payment_method_link',
+    'detail_link',
   )
-
-  @admin.display(description=_("Current Period Start"))
-  def current_period_start_display(self, obj: Subscription) -> str:
-    return date_format(obj.current_period_start, 'DATETIME_FORMAT')
-
-  @admin.display(description=_("Current Period End"))
-  def current_period_end_display(self, obj: Subscription) -> str:
-    return date_format(obj.current_period_end, 'DATETIME_FORMAT')
 
 
 class PaymentMethodInline(StripeModelInline[PaymentMethod, Customer]):
   model = PaymentMethod
   extra = 0
   fields = (
+    'detail_link',
     'type',
-    'card_info',
-    'billing_details_display',
   )
-  readonly_fields = ('card_info', 'billing_details_display')
-
-  @admin.display(description=_("Billing Details"))
-  def billing_details_display(self, obj: PaymentMethod) -> str:
-    return get_address_display(obj.billing_details.get('address', {}))
+  readonly_fields = (
+    'detail_link',
+  )
 
 
 class FundingInstructionsInline(
@@ -421,78 +339,71 @@ class FundingInstructionsInline(
     'account_number',
     'routing_number',
     'swift_code',
-    'bank_address_display',
-    'account_holder_address_display',
+    'bank_address',
+    'account_holder_address',
   )
-  readonly_fields = (
-    'account_holder_address_display',
-    'bank_address_display',
-  )
-
-  @admin.display(description=_("Account Holder Address"))
-  def account_holder_address_display(self, obj: FundingInstructions) -> str:
-    return get_address_display(obj.account_holder_address)
-
-  @admin.display(description=_("Bank Address"))
-  def bank_address_display(self, obj: FundingInstructions) -> str:
-    return get_address_display(obj.bank_address)
 
 
 class InvoiceMixin:
-  @admin.display(description=_("Total"), ordering='total')
-  def total_display(self, obj: Invoice) -> str:
-    return get_currency_display(obj, 'total')
+
+  exclude: ClassVar[_Fields | None] = (
+    'invoice_pdf',
+    'hosted_invoice_url',
+  )
+  readonly_fields: ClassVar[_Fields] = (
+    'pdf_link',
+    'portal_link',
+    'detail_link',
+  )
 
   @admin.display(description=_("PDF"))
-  def pdf(self, obj: Invoice) -> str:
-    html = format_html(
-      '<a href="{url}">PDF</a>',
-      url=obj.invoice_pdf,
-    )
-    return html
+  def pdf_link(self, obj: Invoice) -> str:
+    s = mark_safe('-')
+    if obj.invoice_pdf:
+      s = format_html(
+        '<a href="{}" target="_blank">View</a>',
+        obj.invoice_pdf,
+      )
+    return s
 
   @admin.display(description=_("Portal"))
-  def portal(self, obj: Invoice) -> str:
-    html = format_html(
-      '<a href="{url}">Link</a>',
-      url=obj.hosted_invoice_url,
-    )
-    return html
+  def portal_link(self, obj: Invoice) -> str:
+    s = mark_safe('-')
+    if obj.hosted_invoice_url:
+      s = format_html(
+        '<a href="{}" target="_blank">Link</a>',
+        obj.hosted_invoice_url,
+      )
+    return s
 
 
-class InvoiceInline(
-  InvoiceMixin,
-  StripeModelInline[Invoice, Customer | Subscription],
-):
+class InvoiceInline(InvoiceMixin, StripeModelInline[Invoice, Customer]):
   model = Invoice
   extra = 0
-
   fields = (
-    'number',
+    'detail_link',
     'status',
-    'total_display',
+    'total',
     'period_start',
     'period_end',
     'collection_method',
-    'pdf',
-    'portal',
+    'pdf_link',
+    'portal_link',
   )
-  readonly_fields = ('total_display', 'pdf', 'portal')
 
 
+# TODO: Deleted customers have no name
 @admin.register(Customer)
 class CustomerAdmin(StripeModelAdmin[Customer]):
   search_fields = (
-    'email',
     'name',
+    'email',
     'phone',
   )
-
-  list_display_links = ('id', )
+  list_display_links = ('name', )
   list_display = (
-    'id',
-    'email',
     'name',
+    'email',
     'phone',
     'deleted',
   )
@@ -512,25 +423,22 @@ class PaymentMethodAdmin(StripeModelAdmin[PaymentMethod]):
     'customer__email',
     'customer__name',
     'customer__phone',
-  )
-  list_display_links = ('type', )
-  list_display = (
     'type',
-    'card_info',
-    'billing_details_display',
+  )
+  list_display = (
+    'detail_link',
+    'type',
     'customer_link',
   )
   list_select_related = (
     'customer',
   )
-
-  @admin.display(description=_("Billing Details"))
-  def billing_details_display(self, obj: PaymentMethod) -> str:
-    return get_address_display(obj.billing_details.get('address', {}))
-
-  @admin.display(description=_("Customer"), ordering='customer')
-  def customer_link(self, obj: PaymentMethod) -> str:
-    return get_related_link(obj, 'customer')
+  list_filter = (
+    'type',
+  )
+  readonly_fields = (
+    'detail_link',
+  )
 
 
 @admin.register(FundingInstructions)
@@ -541,26 +449,19 @@ class FundingInstructionsAdmin(StripeModelAdmin[FundingInstructions]):
     'account_number',
     'routing_number',
     'swift_code',
-    'bank_address_display',
-    'account_holder_address_display',
+    'bank_address',
+    'account_holder_address',
   )
-
-  @admin.display(description=_("Account Holder Address"))
-  def account_holder_address_display(self, obj: FundingInstructions) -> str:
-    return get_address_display(obj.account_holder_address)
-
-  @admin.display(description=_("Bank Address"))
-  def bank_address_display(self, obj: FundingInstructions) -> str:
-    return get_address_display(obj.bank_address)
-
-  @admin.display(description=_("Customer"), ordering='customer')
-  def customer_link(self, obj: FundingInstructions) -> str:
-    return get_related_link(obj, 'customer')
+  list_select_related = (
+    'customer',
+  )
 
 
 @admin.register(PaymentIntent)
 class PaymentIntentAdmin(StripeModelAdmin[PaymentIntent]):
   search_fields = (
+    'description',
+    'status',
     'customer__email',
     'customer__name',
     'customer__phone',
@@ -569,9 +470,9 @@ class PaymentIntentAdmin(StripeModelAdmin[PaymentIntent]):
   list_display = (
     'description',
     'status',
-    'amount_display',
+    'amount',
     'setup_future_usage',
-    'receipt_email',
+    # 'receipt_email',
     'customer_link',
     'payment_method_link',
   )
@@ -579,84 +480,72 @@ class PaymentIntentAdmin(StripeModelAdmin[PaymentIntent]):
     'customer',
     'payment_method',
   )
-
-  @admin.display(description=_("Amount"), ordering='amount')
-  def amount_display(self, obj: PaymentIntent) -> str:
-    return get_currency_display(obj, 'amount', show_sign=True)
-
-  @admin.display(description=_("Customer"), ordering='customer')
-  def customer_link(self, obj: PaymentIntent) -> str:
-    return get_related_link(obj, 'customer')
-
-  @admin.display(description=_("Payment Method"), ordering='payment_method')
-  def payment_method_link(self, obj: PaymentIntent) -> str:
-    return get_related_link(obj, 'payment_method', display_field='card_info')
+  list_filter = (
+    'description',
+    'status',
+  )
 
 
+# TODO: None
 @admin.register(ConfirmationToken)
 class ConfirmationTokenAdmin(StripeModelAdmin[ConfirmationToken]):
   list_display = (
     'id',
     'created',
     'expires_at',
-    'card_info',
+    'payment_method_preview',
     'customer_link',
     'is_expired',
-  )
-  list_select_related = ('customer', )
-
-  @admin.display(description=_("Customer"), ordering='customer')
-  def customer_link(self, obj: ConfirmationToken) -> str:
-    return get_related_link(obj, 'customer')
-
-
-@admin.register(Subscription)
-class SubscriptionAdmin(SubscriptionMixin, StripeModelAdmin[Subscription]):
-  search_fields = (
-    'customer__email',
-    'customer__name',
-    'customer__phone',
-  )
-
-  list_display_links = ('id', )
-  list_display = (
-    'id',
-    'status_display',
-    'current_period_start',
-    'current_period_end',
-    'collection_method',
-    'customer_link',
-    'default_payment_method_link',
-    'cancel_at_period_end',
   )
   list_select_related = (
     'customer',
   )
 
-  inlines = (InvoiceInline, )
 
-  @admin.display(description=_("Customer"), ordering='customer')
-  def customer_link(self, obj: Subscription) -> str:
-    return get_related_link(obj, 'customer')
-
-
-@admin.register(Invoice)
-class InvoiceAdmin(InvoiceMixin, StripeModelAdmin[Invoice]):
+@admin.register(Subscription)
+class SubscriptionAdmin(StripeModelAdmin[Subscription]):
   search_fields = (
     'customer__email',
     'customer__name',
     'customer__phone',
   )
+  list_display = (
+    'customer_link',
+    'status',
+    'collection_method',
+    'default_payment_method_link',
+    'cancel_at_period_end',
+  )
+  list_select_related = (
+    'customer',
+    'default_payment_method',
+  )
+  list_filter = (
+    'collection_method',
+    'cancel_at_period_end',
+  )
 
+
+# TODO: Review table column order
+@admin.register(Invoice)
+class InvoiceAdmin(InvoiceMixin, StripeModelAdmin[Invoice]):
+  search_fields = (
+    'number',
+    'status',
+    'collection_method',
+    'customer__email',
+    'customer__name',
+    'customer__phone',
+  )
   list_display = (
     'number',
     'status',
-    'total_display',
+    'total',
     'period_start',
     'period_end',
     'collection_method',
-    'pdf',
-    'portal',
+    'pdf_link',
+    'portal_link',
     'customer_link',
     'subscription_link',
   )
@@ -664,23 +553,20 @@ class InvoiceAdmin(InvoiceMixin, StripeModelAdmin[Invoice]):
     'customer',
     'subscription',
   )
-
-  @admin.display(description=_("Customer"), ordering='customer')
-  def customer_link(self, obj: Invoice) -> str:
-    return get_related_link(obj, 'customer')
-
-  @admin.display(description=_("Subscription"), ordering='subscription')
-  def subscription_link(self, obj: Invoice) -> str:
-    return get_related_link(obj, 'subscription')
+  list_filter = (
+    'collection_method',
+    'status',
+  )
 
 
+# TODO: None?
 @admin.register(InvoicePayment)
 class InvoicePaymentAdmin(StripeModelAdmin[InvoicePayment]):
   list_display = (
     'created',
     'status',
-    'amount_paid_display',
-    'amount_requested_display',
+    'amount_paid',
+    'amount_requested',
     'payment_intent_link',
     'invoice_link',
     'is_default',
@@ -690,22 +576,6 @@ class InvoicePaymentAdmin(StripeModelAdmin[InvoicePayment]):
     'invoice',
   )
 
-  @admin.display(description=_("Paid"), ordering='amount_paid')
-  def amount_paid_display(self, obj: InvoicePayment) -> str:
-    return get_currency_display(obj, 'amount_paid')
-
-  @admin.display(description=_("Paid"), ordering='amount_requested')
-  def amount_requested_display(self, obj: InvoicePayment) -> str:
-    return get_currency_display(obj, 'amount_requested')
-
-  @admin.display(description=_("Payment Intent"), ordering='payment_intent')
-  def payment_intent_link(self, obj: InvoicePayment) -> str:
-    return get_related_link(obj, 'payment_intent')
-
-  @admin.display(description=_("Invoice"), ordering='invoice')
-  def invoice_link(self, obj: InvoicePayment) -> str:
-    return get_related_link(obj, 'invoice', display_field='number')
-
 
 @admin.register(BalanceTransaction)
 class BalanceTransactionAdmin(StripeModelAdmin[BalanceTransaction]):
@@ -713,44 +583,36 @@ class BalanceTransactionAdmin(StripeModelAdmin[BalanceTransaction]):
     'type',
     'status',
   )
-
   list_display = (
     'type',
     'status',
-    'amount_display',
-    'fee_display',
-    'net_display',
     'available_on',
+    'amount',
+    'fee',
+    'net',
   )
-
-  @admin.display(description=_("Amount"), ordering='amount')
-  def amount_display(self, obj: BalanceTransaction) -> str:
-    return get_currency_display(obj, 'amount', show_sign=True)
-
-  @admin.display(description=_("Fee"), ordering='fee')
-  def fee_display(self, obj: BalanceTransaction) -> str:
-    return get_currency_display(obj, 'fee', show_sign=True)
-
-  @admin.display(description=_("Net"), ordering='net')
-  def net_display(self, obj: BalanceTransaction) -> str:
-    return get_currency_display(obj, 'net', show_sign=True)
+  list_filter = (
+    'type',
+    'status',
+  )
 
 
 @admin.register(Charge)
 class ChargeAdmin(StripeModelAdmin[Charge]):
   search_fields = (
+    'description',
+    'status',
+    'receipt_email',
     'customer__email',
     'customer__name',
     'customer__phone',
   )
-
   list_display = (
-    'created',
+    'customer_link',
     'description',
     'status',
-    'amount_display',
-    'receipt_email',
-    'customer_link',
+    'amount',
+    # 'receipt_email',
     'payment_intent_link',
     'balance_transaction_link',
     'disputed',
@@ -761,30 +623,24 @@ class ChargeAdmin(StripeModelAdmin[Charge]):
     'payment_intent',
     'balance_transaction',
   )
-
-  @admin.display(description=_("Amount"), ordering='amount')
-  def amount_display(self, obj: Charge) -> str:
-    return get_currency_display(obj, 'amount')
-
-  @admin.display(description=_("Customer"), ordering='customer')
-  def customer_link(self, obj: Charge) -> str:
-    return get_related_link(obj, 'customer')
-
-  @admin.display(description=_("Payment Intent"), ordering='payment_intent')
-  def payment_intent_link(self, obj: Charge) -> str:
-    return get_related_link(obj, 'payment_intent')
-
-  @admin.display(description=_("Balance Transaction"), ordering='balance_transaction')  # noqa: E501
-  def balance_transaction_link(self, obj: Charge) -> str:
-    return get_related_link(obj, 'balance_transaction')
+  list_filter = (
+    'description',
+    'status',
+    'disputed',
+    'refunded',
+  )
 
 
 @admin.register(Refund)
 class RefundAdmin(StripeModelAdmin[Refund]):
+  search_fields = (
+    'reason',
+    'status',
+  )
   list_display = (
     'reason',
     'status',
-    'amount_display',
+    'amount',
     'charge_link',
     'balance_transaction_link',
   )
@@ -792,15 +648,7 @@ class RefundAdmin(StripeModelAdmin[Refund]):
     'charge',
     'balance_transaction',
   )
-
-  @admin.display(description=_("Amount"), ordering='amount')
-  def amount_display(self, obj: Refund) -> str:
-    return get_currency_display(obj, 'amount')
-
-  @admin.display(description=_("Charge"), ordering='charge')
-  def charge_link(self, obj: Refund) -> str:
-    return get_related_link(obj, 'charge')
-
-  @admin.display(description=_("Balance Transaction"), ordering='balance_transaction')  # noqa: E501
-  def balance_transaction_link(self, obj: Refund) -> str:
-    return get_related_link(obj, 'balance_transaction')
+  list_filter = (
+    'status',
+    'reason',
+  )

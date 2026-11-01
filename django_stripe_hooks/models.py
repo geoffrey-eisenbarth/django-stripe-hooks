@@ -11,77 +11,14 @@ from django.utils.functional import cached_property
 from django.utils.safestring import mark_safe
 from django.utils.translation import gettext_lazy as _
 
+from django_stripe_hooks.fields import MoneyField
 from django_stripe_hooks.managers import (
   FundingInstructionsManager, StripeManager, is_stripe_model, _write_depth,
 )
+from django_stripe_hooks.money import CURRENCY_CHOICES, CURRENCY_DIVISOR
 
 
 T = TypeVar('T', bound=stripe.StripeObject)
-
-CURRENCIES = (
-  ('', _("N/A")),
-  ('usd', _("US Dollar")),
-  ('cad', _("Canadian Dollar")),
-  ('aud', _("Australian Dollar")),
-  ('nzd', _("New Zealand Dollar")),
-  ('sgd', _("Singapore Dollar")),
-  ('hkd', _("Hong Kong Dollar")),
-  ('eur', _("Euro")),
-  ('gbp', _("British Pound")),
-  ('chf', _("Swiss Franc")),
-  ('sek', _("Swedish Krona")),
-  ('nok', _("Norwegian Krone")),
-  ('dkk', _("Danish Krone")),
-  ('jpy', _("Japanese Yen")),
-  ('krw', _("South Korean Won")),
-  ('twd', _("New Taiwan Dollar")),
-  ('huf', _("Hungarian Forint")),
-  ('clp', _("Chilean Peso")),
-  ('isk', _("Icelandic Krona")),
-)
-
-CURRENCY_SYMBOL = {
-  'usd': '$',
-  'cad': '$',
-  'aud': '$',
-  'nzd': '$',
-  'sgd': '$',
-  'hkd': '$',
-  'eur': '€',
-  'gbp': '£',
-  'chf': 'Fr',
-  'sek': 'kr',
-  'nok': 'kr',
-  'dkk': 'kr',
-  'jpy': '¥',
-  'krw': '₩',
-  'twd': 'NT$',
-  'huf': 'Ft',
-  'clp': '$',
-  'isk': 'kr',
-}
-
-CURRENCY_DIVISOR = {
-  '': 1,
-  'usd': 100,
-  'cad': 100,
-  'aud': 100,
-  'nzd': 100,
-  'sgd': 100,
-  'hkd': 100,
-  'eur': 100,
-  'gbp': 100,
-  'chf': 100,
-  'sek': 100,
-  'nok': 100,
-  'dkk': 100,
-  'jpy': 1,
-  'krw': 1,
-  'twd': 1,
-  'huf': 1,
-  'clp': 1,
-  'isk': 1,
-}
 
 
 class StripeModel(models.Model, Generic[T]):
@@ -135,7 +72,7 @@ class StripeModel(models.Model, Generic[T]):
     elif isinstance(field, models.IntegerField):
       if (value is None) and not field.null:
         value = 0
-    elif isinstance(field, models.DecimalField):
+    elif isinstance(field, MoneyField):
       if value is None:
         value = None if field.null else Decimal(0)
       else:
@@ -266,6 +203,9 @@ class Product(StripeModel[stripe.Product]):
     verbose_name_plural = _("Products")
     ordering = ['pk']
 
+  def __str__(self) -> str:
+    return self.name or self.id
+
 
 class Price(StripeModel[stripe.Price]):
   """Django implementation of Stripe Prices.
@@ -297,8 +237,8 @@ class Price(StripeModel[stripe.Price]):
   )
   USAGE_TYPES = (
     ('', _("N/A")),
-    ('licensed', _("Licensed usage")),
-    ('metered', _("Metered usage")),
+    ('licensed', _("Licensed")),
+    ('metered', _("Metered")),
   )
   BILLING_SCHEMES = (
     ('per_unit', _("Per unit")),
@@ -319,10 +259,10 @@ class Price(StripeModel[stripe.Price]):
   )
   currency = models.CharField(
     max_length=3,
-    choices=CURRENCIES,
+    choices=CURRENCY_CHOICES,
     verbose_name=_("Currency"),
   )
-  unit_amount = models.DecimalField(
+  unit_amount = MoneyField(
     max_digits=8,
     decimal_places=2,
     verbose_name=_("Unit amount"),
@@ -408,6 +348,20 @@ class Price(StripeModel[stripe.Price]):
 
     return data
 
+  def __str__(self) -> str:
+    return self.nickname or self.id
+
+  @property
+  def recurring(self) -> str:
+    if self.type == 'recurring':
+      if self.interval_count == 1:
+        s = f"Every {self.interval}"
+      else:
+        s = f"Every {self.interval_count} {self.interval}s"
+    else:
+      s = "One-time charge"
+    return s
+
 
 class PriceTier(models.Model):
   """Django implementation of a Price Tier for Stripe's Tiered Pricing.
@@ -427,17 +381,19 @@ class PriceTier(models.Model):
       "Quantity upper bound, leave blank for no upper bound"
     ),
   )
-  flat_amount = models.DecimalField(
+  flat_amount = MoneyField(
     max_digits=8,
     decimal_places=2,
+    currency_field='price__currency',
     verbose_name=_("Flat amount"),
     help_text=_(
       "Base amount for the tier"
     ),
   )
-  unit_amount = models.DecimalField(
+  unit_amount = MoneyField(
     max_digits=8,
     decimal_places=2,
+    currency_field='price__currency',
     verbose_name=_("Unit amount"),
     help_text=_(
       "Per unit cost in the tier"
@@ -496,10 +452,10 @@ class Coupon(StripeModel[stripe.Coupon]):
   )
   currency = models.CharField(
     max_length=3,
-    choices=CURRENCIES,
+    choices=CURRENCY_CHOICES,
     verbose_name=_("Currency"),
   )
-  amount_off = models.DecimalField(
+  amount_off = MoneyField(
     max_digits=8,
     decimal_places=2,
     null=True,
@@ -565,6 +521,9 @@ class Coupon(StripeModel[stripe.Coupon]):
       data['products'] = list(applies_to.products)
 
     return data
+
+  def __str__(self) -> str:
+    return self.name or self.id
 
   @property
   def terms(self) -> str:
@@ -669,6 +628,9 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
         data['coupon_id'] = stripe_coupon
 
     return data
+
+  def __str__(self) -> str:
+    return self.code or self.id
 
   @property
   def redemptions(self) -> str:
@@ -808,14 +770,14 @@ class Customer(StripeModel[stripe.Customer]):
     'customer.updated',
   )
 
-  email = models.EmailField(
-    db_index=True,
-    verbose_name=_("Email address"),
-  )
   name = models.CharField(
     max_length=255,
     blank=True,
     verbose_name=_("Name"),
+  )
+  email = models.EmailField(
+    db_index=True,
+    verbose_name=_("Email address"),
   )
   phone = models.CharField(
     max_length=20,
@@ -831,6 +793,9 @@ class Customer(StripeModel[stripe.Customer]):
     verbose_name = _("Customer")
     verbose_name_plural = _("Customers")
     ordering = ['email']
+
+  def __str__(self) -> str:
+    return self.name or self.id
 
 
 class PaymentMethod(StripeModel[stripe.PaymentMethod]):
@@ -852,32 +817,71 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
   )
 
   TYPES = (
-    ('card', _("Credit/Debit Card")),
-    ('customer_balance', _("Customer Balance")),
-    ('afterpay_clearpay', _("Afterpay/Clearpay")),
-    ('alipay', _("Alipay (China)")),
+    ('acss_debit', _("ACSS Debit (Canada/US)")),
+    ('affirm', _("Affirm")),
+    ('afterpay_clearpay', _("Afterpay / Clearpay")),
+    ('alipay', _("Alipay")),
+    ('alma', _("Alma")),
+    ('amazon_pay', _("Amazon Pay")),
     ('au_becs_debit', _("BECS Debit (Australia)")),
-    ('bacs_debit', _("BACS Debit (United Kingdom)")),
+    ('bacs_debit', _("BACS Debit (UK)")),
     ('bancontact', _("Bancontact (Belgium)")),
+    ('billie', _("Billie")),
+    ('blik', _("BLIK (Poland)")),
+    ('boleto', _("Boleto (Brazil)")),
+    ('card', _("Credit/Debit Card")),
+    ('card_present', _("Card Present")),
+    ('cashapp', _("Cash App Pay")),
+    ('crypto', _("Crypto")),
+    ('custom', _("Custom")),
+    ('customer_balance', _("Customer Balance")),
     ('eps', _("EPS (Austria)")),
     ('fpx', _("FPX (Malaysia)")),
     ('giropay', _("giropay (Germany)")),
     ('grabpay', _("GrabPay (Southeast Asia)")),
     ('ideal', _("iDEAL (Netherlands)")),
-    ('interac_preset', _("Interac (Stripe Terminal)")),
+    ('interac_present', _("Interac (Terminal)")),
+    ('kakao_pay', _("Kakao Pay (South Korea)")),
+    ('klarna', _("Klarna")),
+    ('konbini', _("Konbini (Japan)")),
+    ('kr_card', _("Korean Card")),
+    ('link', _("Link")),
+    ('mb_way', _("MB WAY (Portugal)")),
+    ('mobilepay', _("MobilePay (Scandinavia)")),
+    ('multibanco', _("Multibanco (Portugal)")),
+    ('naver_pay', _("Naver Pay (South Korea)")),
+    ('nz_bank_account', _("Bank Account (New Zealand)")),
+    ('oxxo', _("OXXO (Mexico)")),
     ('p24', _("Przelewy24 (Poland)")),
-    ('sepa_debit', _("SEPA Direct Debit (European Union)")),
+    ('pay_by_bank', _("Pay by Bank")),
+    ('payco', _("PAYCO (South Korea)")),
+    ('paynow', _("PayNow (Singapore)")),
+    ('paypal', _("PayPal")),
+    ('payto', _("PayTo (Australia)")),
+    ('pix', _("Pix (Brazil)")),
+    ('promptpay', _("PromptPay (Thailand)")),
+    ('revolut_pay', _("Revolut Pay")),
+    ('samsung_pay', _("Samsung Pay")),
+    ('satispay', _("Satispay (Italy)")),
+    ('sepa_debit', _("SEPA Direct Debit (EU)")),
     ('sofort', _("Sofort (Europe)")),
+    ('swish', _("Swish (Sweden)")),
+    ('twint', _("TWINT (Switzerland)")),
+    ('us_bank_account', _("Bank Account (US)")),
+    ('wechat_pay', _("WeChat Pay")),
+    ('zip', _("Zip")),
   )
   CARD_BRANDS = (
     ('amex', _("American Express")),
     ('cartes_bancaires', _("Cartes Bancaires")),
     ('diners', _("Diners Club")),
     ('discover', _("Discover")),
+    ('eftpos_au', _("EFTPOS Australia")),
     ('jcb', _("JCB")),
+    ('link', _("Link")),
     ('mastercard', _("MasterCard")),
-    ('visa', _("Visa")),
     ('unionpay', _("UnionPay")),
+    ('visa', _("Visa")),
     ('unknown', _("Unknown")),
   )
 
@@ -886,9 +890,9 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
     choices=TYPES,
     verbose_name=_("Type"),
   )
-  card = models.JSONField(
+  details = models.JSONField(
     default=dict,
-    verbose_name=_("Card"),
+    verbose_name=_("Details"),
   )
   billing_details = models.JSONField(
     default=dict,
@@ -908,16 +912,20 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
     verbose_name = _("Payment Method")
     verbose_name_plural = _("Payment Methods")
 
-  @property
-  def card_info(self) -> str:
-    if self.card:
-      s = "{brand} {bullets} {bullets} {bullets} {last4}".format(
-        brand=dict(self.CARD_BRANDS)[self.card.get('brand', 'unknown')],
-        bullets='\u2022' * 4,
-        last4=self.card.get('last4', '0000'),
+  @classmethod
+  def deserialize(cls, stripe_obj: stripe.PaymentMethod) -> dict[str, Any]:
+    data = super().deserialize(stripe_obj)
+    data['details'] = getattr(stripe_obj, stripe_obj.type)
+    return data
+
+  def __str__(self) -> str:
+    if self.type == 'card':
+      s = "{brand} ({last4})".format(
+        brand=dict(self.CARD_BRANDS)[self.details.get('brand', 'unknown')],
+        last4=self.details.get('last4', '0000'),
       )
-    else:
-      s = ''
+    else:  # TODO add more formats
+      s = self.get_type_display()
     return s
 
 
@@ -1053,10 +1061,10 @@ class PaymentIntent(StripeModel[stripe.PaymentIntent]):
   )
   currency = models.CharField(
     max_length=3,
-    choices=CURRENCIES,
+    choices=CURRENCY_CHOICES,
     verbose_name=_("Currency"),
   )
-  amount = models.DecimalField(
+  amount = MoneyField(
     max_digits=8,
     decimal_places=2,
     verbose_name=_("Amount"),
@@ -1149,21 +1157,17 @@ class ConfirmationToken(models.Model):
     ordering = ['customer', '-created']
     get_latest_by = 'created'
 
+  def __str__(self) -> str:
+    pm_type = self.payment_method_preview.get('type', 'unknown')
+    pm = PaymentMethod(
+      type=pm_type,
+      details=self.payment_method_preview[pm_type],
+    )
+    return str(pm)
+
   @property
   def is_expired(self) -> bool:
     return (self.expires_at < timezone.now())
-
-  @property
-  def card_info(self) -> str:
-    if card := self.payment_method_preview.get('card', {}):
-      s = "{brand} {bullets} {bullets} {bullets} {last4}".format(
-        brand=dict(PaymentMethod.CARD_BRANDS)[card.get('brand', 'unknown')],
-        bullets='\u2022' * 4,
-        last4=card.get('last4', '0000'),
-      )
-    else:
-      s = ''
-    return s
 
 
 class Subscription(StripeModel[stripe.Subscription]):
@@ -1250,14 +1254,6 @@ class Subscription(StripeModel[stripe.Subscription]):
   class Meta(StripeModel.Meta):
     verbose_name = _("Subscription")
     verbose_name_plural = _("Subscriptions")
-
-  @cached_property
-  def current_period_start(self) -> dt.datetime:
-    return min(item.current_period_start for item in self.items.all())
-
-  @cached_property
-  def current_period_end(self) -> dt.datetime:
-    return max(item.current_period_end for item in self.items.all())
 
 
 class SubscriptionItem(StripeModel[stripe.SubscriptionItem]):
@@ -1365,10 +1361,10 @@ class Invoice(StripeModel[stripe.Invoice]):
   )
   currency = models.CharField(
     max_length=3,
-    choices=CURRENCIES,
+    choices=CURRENCY_CHOICES,
     verbose_name=_("Currency"),
   )
-  amount_due = models.DecimalField(
+  amount_due = MoneyField(
     max_digits=8,
     decimal_places=2,
     verbose_name=_("Amount Due"),
@@ -1376,7 +1372,7 @@ class Invoice(StripeModel[stripe.Invoice]):
       "Final amount due at this time"
     ),
   )
-  amount_paid = models.DecimalField(
+  amount_paid = MoneyField(
     max_digits=8,
     decimal_places=2,
     verbose_name=_("Amount Paid"),
@@ -1384,7 +1380,7 @@ class Invoice(StripeModel[stripe.Invoice]):
       "Amount that was paid by the customer, if any"
     ),
   )
-  amount_overpaid = models.DecimalField(
+  amount_overpaid = MoneyField(
     max_digits=8,
     decimal_places=2,
     verbose_name=_("Amount Overpaid"),
@@ -1392,7 +1388,7 @@ class Invoice(StripeModel[stripe.Invoice]):
       "Amount that was overpaid by the customer, if any"
     ),
   )
-  amount_remaining = models.DecimalField(
+  amount_remaining = MoneyField(
     max_digits=8,
     decimal_places=2,
     verbose_name=_("Amount Remaining"),
@@ -1400,7 +1396,7 @@ class Invoice(StripeModel[stripe.Invoice]):
       "Amount remaining to be paid by the customer, if any"
     ),
   )
-  amount_shipping = models.DecimalField(
+  amount_shipping = MoneyField(
     max_digits=8,
     decimal_places=2,
     verbose_name=_("Amount Shipping"),
@@ -1408,7 +1404,7 @@ class Invoice(StripeModel[stripe.Invoice]):
       "Shipping costs, if any"
     ),
   )
-  total_taxes_amount = models.DecimalField(
+  total_taxes_amount = MoneyField(
     max_digits=8,
     decimal_places=2,
     verbose_name=_("Tax"),
@@ -1416,7 +1412,7 @@ class Invoice(StripeModel[stripe.Invoice]):
       "Total applicable taxes"
     ),
   )
-  total_discounts_amount = models.DecimalField(
+  total_discounts_amount = MoneyField(
     max_digits=8,
     decimal_places=2,
     verbose_name=_("Discount"),
@@ -1424,7 +1420,7 @@ class Invoice(StripeModel[stripe.Invoice]):
       "Total discounts"
     ),
   )
-  subtotal_excluding_tax = models.DecimalField(
+  subtotal_excluding_tax = MoneyField(
     max_digits=8,
     decimal_places=2,
     verbose_name=_("Subtotal excluding tax"),
@@ -1432,7 +1428,7 @@ class Invoice(StripeModel[stripe.Invoice]):
       "Total after item discounts and before taxes"
     ),
   )
-  subtotal = models.DecimalField(
+  subtotal = MoneyField(
     max_digits=8,
     decimal_places=2,
     verbose_name=_("Subtotal"),
@@ -1440,7 +1436,7 @@ class Invoice(StripeModel[stripe.Invoice]):
       "Total before discounts and taxes"
     ),
   )
-  total_excluding_tax = models.DecimalField(
+  total_excluding_tax = MoneyField(
     max_digits=8,
     decimal_places=2,
     verbose_name=_("Total excluding tax"),
@@ -1448,7 +1444,7 @@ class Invoice(StripeModel[stripe.Invoice]):
       "Total after all discounts and before taxes"
     ),
   )
-  total = models.DecimalField(
+  total = MoneyField(
     max_digits=8,
     decimal_places=2,
     verbose_name=_("Total"),
@@ -1526,6 +1522,9 @@ class Invoice(StripeModel[stripe.Invoice]):
   def has_prorations(self) -> bool:
     return self.lines.filter(proration=True).exists()
 
+  def __str__(self) -> str:
+    return self.number or self.id
+
 
 class InvoiceLineItem(StripeModel[stripe.StripeObject]):
   """Django implementation of Stripe Invoice Line Items.
@@ -1539,10 +1538,10 @@ class InvoiceLineItem(StripeModel[stripe.StripeObject]):
 
   currency = models.CharField(
     max_length=3,
-    choices=CURRENCIES,
+    choices=CURRENCY_CHOICES,
     verbose_name=_("Currency"),
   )
-  amount = models.DecimalField(
+  amount = MoneyField(
     max_digits=8,
     decimal_places=2,
     verbose_name=_("Amount"),
@@ -1650,10 +1649,10 @@ class InvoicePayment(StripeModel[stripe.StripeObject]):
   )
   currency = models.CharField(
     max_length=3,
-    choices=CURRENCIES,
+    choices=CURRENCY_CHOICES,
     verbose_name=_("Currency"),
   )
-  amount_paid = models.DecimalField(
+  amount_paid = MoneyField(
     max_digits=8,
     decimal_places=2,
     null=True,
@@ -1661,7 +1660,7 @@ class InvoicePayment(StripeModel[stripe.StripeObject]):
     verbose_name=_("Amount paid"),
     help_text=_("Null until the payment is paid"),
   )
-  amount_requested = models.DecimalField(
+  amount_requested = MoneyField(
     max_digits=8,
     decimal_places=2,
     verbose_name=_("Amount requested"),
@@ -1764,38 +1763,41 @@ class BalanceTransaction(StripeModel[stripe.BalanceTransaction]):
     choices=STATUSES,
     verbose_name=_("Status"),
   )
+  available_on = models.DateTimeField(
+    verbose_name=_("Available on"),
+  )
   currency = models.CharField(
     max_length=3,
-    choices=CURRENCIES,
+    choices=CURRENCY_CHOICES,
     verbose_name=_("Currency"),
   )
-  amount = models.DecimalField(
+  amount = MoneyField(
     max_digits=8,
     decimal_places=2,
+    is_balance=True,
     verbose_name=_("Amount"),
     help_text=_(
       "Gross amount of this "
       "transaction"
     ),
   )
-  fee = models.DecimalField(
+  fee = MoneyField(
     max_digits=8,
     decimal_places=2,
+    is_balance=True,
     verbose_name=_("Fee"),
     help_text=_(
       "Fee paid for this transaction"
     ),
   )
-  net = models.DecimalField(
+  net = MoneyField(
     max_digits=8,
     decimal_places=2,
+    is_balance=True,
     verbose_name=_("Net"),
     help_text=_(
       "Net amount of this transaction"
     ),
-  )
-  available_on = models.DateTimeField(
-    verbose_name=_("Available on"),
   )
 
   class Meta(StripeModel.Meta):
@@ -1836,6 +1838,13 @@ class Charge(StripeModel[stripe.Charge]):
     ('failed', _("Failed")),
   )
 
+  customer = models.ForeignKey(
+    Customer,
+    on_delete=models.PROTECT,
+    db_constraint=False,  # Stripe webhooks may arrive out of order
+    related_name='charges',
+    verbose_name=_("Customer"),
+  )
   created = models.DateTimeField(
     verbose_name=_("Created"),
   )
@@ -1854,12 +1863,13 @@ class Charge(StripeModel[stripe.Charge]):
   )
   currency = models.CharField(
     max_length=3,
-    choices=CURRENCIES,
+    choices=CURRENCY_CHOICES,
     verbose_name=_("Currency"),
   )
-  amount = models.DecimalField(
+  amount = MoneyField(
     max_digits=8,
     decimal_places=2,
+    is_balance=True,
     verbose_name=_("Amount"),
     help_text=_(
       "Total amount to be collected by this payment"
@@ -1871,13 +1881,6 @@ class Charge(StripeModel[stripe.Charge]):
   billing_details = models.JSONField(
     default=dict,
     verbose_name=_("Billing details"),
-  )
-  customer = models.ForeignKey(
-    Customer,
-    on_delete=models.PROTECT,
-    db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='charges',
-    verbose_name=_("Customer"),
   )
   payment_intent = models.ForeignKey(
     PaymentIntent,
@@ -1960,12 +1963,13 @@ class Refund(StripeModel[stripe.Refund]):
   )
   currency = models.CharField(
     max_length=3,
-    choices=CURRENCIES,
+    choices=CURRENCY_CHOICES,
     verbose_name=_("Currency"),
   )
-  amount = models.DecimalField(
+  amount = MoneyField(
     max_digits=8,
     decimal_places=2,
+    is_balance=True,
     verbose_name=_("Amount"),
     help_text=_(
       "Amount to be refunded"
