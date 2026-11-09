@@ -1,9 +1,8 @@
 import datetime as dt
 from decimal import Decimal
-from typing import TypeVar, Generic, Any
+from typing import Any, TypeVar
 
 import stripe
-
 from django.core.validators import RegexValidator
 from django.db import models
 from django.utils import timezone
@@ -13,15 +12,17 @@ from django.utils.translation import gettext_lazy as _
 
 from django_stripe_hooks.fields import MoneyField
 from django_stripe_hooks.managers import (
-  FundingInstructionsManager, StripeManager, is_stripe_model, _write_depth,
+  FundingInstructionsManager,
+  StripeManager,
+  _write_depth,
+  is_stripe_model,
 )
 from django_stripe_hooks.money import CURRENCY_CHOICES, CURRENCY_DIVISOR
 
+T = TypeVar("T", bound=stripe.StripeObject)
 
-T = TypeVar('T', bound=stripe.StripeObject)
 
-
-class StripeModel(models.Model, Generic[T]):
+class StripeModel[T: stripe.StripeObject](models.Model):
   """Common Stripe model methods and properties."""
 
   API_EXPAND_FIELDS: tuple[str, ...] = ()
@@ -35,9 +36,7 @@ class StripeModel(models.Model, Generic[T]):
   metadata = models.JSONField(
     default=dict,
     verbose_name=_("Metadata"),
-    help_text=_(
-      "Metadata for internal use only"
-    ),
+    help_text=_("Metadata for internal use only"),
   )
 
   objects = StripeManager()
@@ -50,17 +49,17 @@ class StripeModel(models.Model, Generic[T]):
     cls,
     field: models.Field[Any, Any] | models.ForeignObjectRel,
     value: Any,
-    currency: str = '',
+    currency: str = "",
   ) -> Any:
     """Cleans a scalar value from the Stripe API for a Django field."""
     if isinstance(field, (models.CharField, models.TextField)):
       if (value is None) and not field.null:
-        value = ''
+        value = ""
     elif isinstance(field, models.DateTimeField):
       if field.null and (value is None):
         pass
       else:
-        value = dt.datetime.fromtimestamp(value, tz=dt.timezone.utc)
+        value = dt.datetime.fromtimestamp(value, tz=dt.UTC)
     elif isinstance(field, models.DateField):
       if field.null and (value is None):
         pass
@@ -81,7 +80,7 @@ class StripeModel(models.Model, Generic[T]):
       if value is None:
         value = None if field.null else field.default()
       else:
-        value = field.default(getattr(value, 'data', value))
+        value = field.default(getattr(value, "data", value))
     return value
 
   @classmethod
@@ -112,16 +111,16 @@ class StripeModel(models.Model, Generic[T]):
       elif isinstance(field, models.ManyToOneRel):
         RelatedModel = field.related_model
         if is_stripe_model(RelatedModel):
-          items = getattr(value, 'data', value)
+          items = getattr(value, "data", value)
           if isinstance(items, dict):
-            items = items.get('data', [])
+            items = items.get("data", [])
           data[field.name] = items
 
       elif isinstance(field, models.ManyToManyField):
-        data[field.name] = [getattr(v, 'id', v) for v in value]
+        data[field.name] = [getattr(v, "id", v) for v in value]
 
       else:
-        currency = stripe_obj.get('currency', '')
+        currency = stripe_obj.get("currency", "")
         data[field.name] = cls.clean_stripe(field, value, currency=currency)
 
     return data
@@ -130,17 +129,17 @@ class StripeModel(models.Model, Generic[T]):
     return self.id
 
   def save(self, *args: Any, **kwargs: Any) -> None:
-    if getattr(_write_depth, 'count', 0) == 0:
+    if getattr(_write_depth, "count", 0) == 0:
       raise TypeError(
         f"{self.__class__.__name__} is managed by Stripe. "
         "Create and update objects via the Stripe SDK; "
         "the local model is updated automatically when the webhook arrives. "
-        f"To sync immediately, call {self.__class__.__name__}.objects.from_stripe()."  # noqa: E501
+        f"To sync immediately, call {self.__class__.__name__}.objects.from_stripe()."
       )
     super().save(*args, **kwargs)
 
   def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
-    if getattr(_write_depth, 'count', 0) == 0:
+    if getattr(_write_depth, "count", 0) == 0:
       raise TypeError(
         f"{self.__class__.__name__} is managed by Stripe. "
         "Delete objects via the Stripe SDK; the local model "
@@ -160,35 +159,31 @@ class Product(StripeModel[stripe.Product]):
   """
 
   WEBHOOK_EVENTS = (
-    'product.created',
-    'product.deleted',
-    'product.updated',
+    "product.created",
+    "product.deleted",
+    "product.updated",
   )
 
   name = models.CharField(
     max_length=255,
     unique=True,  # Create index
     verbose_name=_("Name"),
-    help_text=_(
-      "The product's name, meant to be displayed to the customer"
-    ),
+    help_text=_("The product's name, meant to be displayed to the customer"),
   )
   description = models.TextField(
     verbose_name=_("Description"),
-    help_text=_(
-      "The product's description, meant to be displayed to the customer"
-    ),
+    help_text=_("The product's description, meant to be displayed to the customer"),
   )
   statement_descriptor = models.CharField(
     max_length=22,
-    validators=[RegexValidator(
-      regex=r'^[A-Za-z0-9]+$',
-      message=_("Code must be alphanumeric"),
-    )],
+    validators=[
+      RegexValidator(
+        regex=r"^[A-Za-z0-9]+$",
+        message=_("Code must be alphanumeric"),
+      )
+    ],
     verbose_name=_("Statement descriptor"),
-    help_text=_(
-      "This will appear on the customer's bank statement"
-    ),
+    help_text=_("This will appear on the customer's bank statement"),
   )
   active = models.BooleanField(
     verbose_name=_("Active?"),
@@ -201,7 +196,7 @@ class Product(StripeModel[stripe.Product]):
   class Meta(StripeModel.Meta):
     verbose_name = _("Product")
     verbose_name_plural = _("Products")
-    ordering = ['pk']
+    ordering = ["pk"]
 
   def __str__(self) -> str:
     return self.name or self.id
@@ -217,45 +212,43 @@ class Price(StripeModel[stripe.Price]):
 
   """
 
-  API_EXPAND_FIELDS = ('product',)
+  API_EXPAND_FIELDS = ("product",)
   WEBHOOK_EVENTS = (
-    'price.created',
-    'price.deleted',
-    'price.updated',
+    "price.created",
+    "price.deleted",
+    "price.updated",
   )
 
   TYPES = (
-    ('recurring', _("Recurring charge")),
-    ('one_time', _("One time charge")),
+    ("recurring", _("Recurring charge")),
+    ("one_time", _("One time charge")),
   )
   INTERVALS = (
-    ('', _("N/A")),
-    ('day', _("Day")),
-    ('week', _("Week")),
-    ('month', _("Month")),
-    ('year', _("Year")),
+    ("", _("N/A")),
+    ("day", _("Day")),
+    ("week", _("Week")),
+    ("month", _("Month")),
+    ("year", _("Year")),
   )
   USAGE_TYPES = (
-    ('', _("N/A")),
-    ('licensed', _("Licensed")),
-    ('metered', _("Metered")),
+    ("", _("N/A")),
+    ("licensed", _("Licensed")),
+    ("metered", _("Metered")),
   )
   BILLING_SCHEMES = (
-    ('per_unit', _("Per unit")),
-    ('tiered', _("Tiered")),
+    ("per_unit", _("Per unit")),
+    ("tiered", _("Tiered")),
   )
   TIERS_MODES = (
-    ('na', _("N/A")),
-    ('volume', _("Volume")),
-    ('graduated', _("Graduated")),
+    ("na", _("N/A")),
+    ("volume", _("Volume")),
+    ("graduated", _("Graduated")),
   )
 
   nickname = models.CharField(
     max_length=255,
     verbose_name=_("Nickname"),
-    help_text=_(
-      "A brief description of the plan visible to customers"
-    ),
+    help_text=_("A brief description of the plan visible to customers"),
   )
   currency = models.CharField(
     max_length=3,
@@ -266,50 +259,38 @@ class Price(StripeModel[stripe.Price]):
     max_digits=8,
     decimal_places=2,
     verbose_name=_("Unit amount"),
-    help_text=_(
-      "Amount to be charged (per interval for recurring payments)"
-    ),
+    help_text=_("Amount to be charged (per interval for recurring payments)"),
   )
   billing_scheme = models.CharField(
     max_length=10,
     choices=BILLING_SCHEMES,
     verbose_name=_("Billing scheme"),
-    help_text=(
-      "How to compute the price per period"
-    ),
+    help_text=("How to compute the price per period"),
   )
   type = models.CharField(
     max_length=10,
     choices=TYPES,
     verbose_name=_("Type"),
-    help_text=_(
-      "One-time or recurring charge"
-    ),
+    help_text=_("One-time or recurring charge"),
   )
   interval = models.CharField(
     max_length=10,
     choices=INTERVALS,
     blank=True,
     verbose_name=_("Interval"),
-    help_text=_(
-      "Required for recurring payments"
-    ),
+    help_text=_("Required for recurring payments"),
   )
   interval_count = models.PositiveIntegerField(
     null=True,
     verbose_name=_("Interval count"),
-    help_text=_(
-      "Number of intervals between subscription billings"
-    ),
+    help_text=_("Number of intervals between subscription billings"),
   )
   usage_type = models.CharField(
     max_length=10,
     blank=True,
     choices=USAGE_TYPES,
     verbose_name=_("Usage type"),
-    help_text=(
-      "Determines how the quantity per period should be determined"
-    ),
+    help_text=("Determines how the quantity per period should be determined"),
   )
   tiers_mode = models.CharField(
     max_length=10,
@@ -324,12 +305,10 @@ class Price(StripeModel[stripe.Price]):
     Product,
     on_delete=models.PROTECT,
     db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='prices',
+    related_name="prices",
     verbose_name=_("Product"),
   )
-  active = models.BooleanField(
-    verbose_name=_("Active?")
-  )
+  active = models.BooleanField(verbose_name=_("Active?"))
 
   class Meta(StripeModel.Meta):
     verbose_name = _("Price")
@@ -339,12 +318,14 @@ class Price(StripeModel[stripe.Price]):
   def deserialize(cls, stripe_obj: stripe.Price) -> dict[str, Any]:
     data = super().deserialize(stripe_obj)
 
-    if (recurring := getattr(stripe_obj, 'recurring', None)) is not None:
-      data.update({
-        'interval': recurring.interval,
-        'interval_count': recurring.interval_count,
-        'usage_type': recurring.usage_type,
-      })
+    if (recurring := getattr(stripe_obj, "recurring", None)) is not None:
+      data.update(
+        {
+          "interval": recurring.interval,
+          "interval_count": recurring.interval_count,
+          "usage_type": recurring.usage_type,
+        }
+      )
 
     return data
 
@@ -353,7 +334,7 @@ class Price(StripeModel[stripe.Price]):
 
   @property
   def recurring(self) -> str:
-    if self.type == 'recurring':
+    if self.type == "recurring":
       if self.interval_count == 1:
         s = f"Every {self.interval}"
       else:
@@ -377,33 +358,27 @@ class PriceTier(models.Model):
     blank=True,
     null=True,
     verbose_name=_("Up to"),
-    help_text=_(
-      "Quantity upper bound, leave blank for no upper bound"
-    ),
+    help_text=_("Quantity upper bound, leave blank for no upper bound"),
   )
   flat_amount = MoneyField(
     max_digits=8,
     decimal_places=2,
-    currency_field='price__currency',
+    currency_field="price__currency",
     verbose_name=_("Flat amount"),
-    help_text=_(
-      "Base amount for the tier"
-    ),
+    help_text=_("Base amount for the tier"),
   )
   unit_amount = MoneyField(
     max_digits=8,
     decimal_places=2,
-    currency_field='price__currency',
+    currency_field="price__currency",
     verbose_name=_("Unit amount"),
-    help_text=_(
-      "Per unit cost in the tier"
-    ),
+    help_text=_("Per unit cost in the tier"),
   )
   price = models.ForeignKey(
     Price,
     on_delete=models.CASCADE,
     db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='tiers',
+    related_name="tiers",
     verbose_name=_("Price"),
   )
 
@@ -422,33 +397,29 @@ class Coupon(StripeModel[stripe.Coupon]):
 
   """
 
-  API_EXPAND_FIELDS = ('applies_to',)
+  API_EXPAND_FIELDS = ("applies_to",)
   WEBHOOK_EVENTS = (
-    'coupon.created',
-    'coupon.deleted',
-    'coupon.updated',
+    "coupon.created",
+    "coupon.deleted",
+    "coupon.updated",
   )
 
   DURATIONS = (
-    ('once', _("Once")),
-    ('forever', _("Forever")),
+    ("once", _("Once")),
+    ("forever", _("Forever")),
   )
 
   name = models.CharField(
     max_length=255,
     blank=False,
     verbose_name=_("Name"),
-    help_text=_(
-      "Name to display on invoices"
-    ),
+    help_text=_("Name to display on invoices"),
   )
   percent_off = models.PositiveIntegerField(
     null=True,
     blank=True,
     verbose_name=_("Percent off"),
-    help_text=_(
-      "Percent that will be taken off of a subscription"
-    ),
+    help_text=_("Percent that will be taken off of a subscription"),
   )
   currency = models.CharField(
     max_length=3,
@@ -461,17 +432,13 @@ class Coupon(StripeModel[stripe.Coupon]):
     null=True,
     blank=True,
     verbose_name=_("Amount off"),
-    help_text=_(
-      "Amount that will be taken off of a subscription"
-    ),
+    help_text=_("Amount that will be taken off of a subscription"),
   )
   duration = models.CharField(
     max_length=9,
     choices=DURATIONS,
     verbose_name=_("Duration"),
-    help_text=_(
-      "How long the discount will apply to a customer's subscription"
-    ),
+    help_text=_("How long the discount will apply to a customer's subscription"),
   )
   times_redeemed = models.PositiveIntegerField(
     default=0,
@@ -481,9 +448,7 @@ class Coupon(StripeModel[stripe.Coupon]):
   max_redemptions = models.PositiveIntegerField(
     default=0,
     verbose_name=_("Maximum number of redemptions"),
-    help_text=_(
-      "Optional, leave blank for infinite redemptions"
-    ),
+    help_text=_("Optional, leave blank for infinite redemptions"),
   )
   redeem_by = models.DateTimeField(
     null=True,
@@ -492,12 +457,10 @@ class Coupon(StripeModel[stripe.Coupon]):
   )
   products = models.ManyToManyField(
     Product,
-    related_name='coupons',
+    related_name="coupons",
     blank=True,
     verbose_name=_("Products"),
-    help_text=_(
-      "Specify which product(s) this coupon will apply to"
-    ),
+    help_text=_("Specify which product(s) this coupon will apply to"),
   )
   valid = models.BooleanField(
     verbose_name=_("Valid?"),
@@ -511,14 +474,14 @@ class Coupon(StripeModel[stripe.Coupon]):
   def deserialize(cls, stripe_obj: stripe.Coupon) -> dict[str, Any]:
     data = super().deserialize(stripe_obj)
 
-    if getattr(stripe_obj, 'deleted', False):
-      data.setdefault('name', f'Deleted ({stripe_obj.id})')
-      data.setdefault('currency', '')
-      data.setdefault('duration', '')
-      data.setdefault('valid', False)
+    if getattr(stripe_obj, "deleted", False):
+      data.setdefault("name", f"Deleted ({stripe_obj.id})")
+      data.setdefault("currency", "")
+      data.setdefault("duration", "")
+      data.setdefault("valid", False)
 
-    if (applies_to := getattr(stripe_obj, 'applies_to', None)) is not None:
-      data['products'] = list(applies_to.products)
+    if (applies_to := getattr(stripe_obj, "applies_to", None)) is not None:
+      data["products"] = list(applies_to.products)
 
     return data
 
@@ -528,20 +491,20 @@ class Coupon(StripeModel[stripe.Coupon]):
   @property
   def terms(self) -> str:
     if self.percent_off:
-      terms = f'{self.percent_off}% off {self.duration}'
+      terms = f"{self.percent_off}% off {self.duration}"
     elif self.amount_off:
-      terms = f'${self.amount_off} off {self.duration}'
+      terms = f"${self.amount_off} off {self.duration}"
     else:
-      terms = ''
+      terms = ""
     return terms
 
   @property
   def redemptions(self) -> str:
-    count = f'{self.times_redeemed:,d}'
+    count = f"{self.times_redeemed:,d}"
     if self.max_redemptions:
-      maximum = f'{self.max_redemptions:,d}'
+      maximum = f"{self.max_redemptions:,d}"
     else:
-      maximum = '&infin;'
+      maximum = "&infin;"
     return mark_safe(f"{count} of {maximum}")
 
 
@@ -555,23 +518,23 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
 
   """
 
-  API_EXPAND_FIELDS = ('promotion.coupon',)
+  API_EXPAND_FIELDS = ("promotion.coupon",)
   WEBHOOK_EVENTS = (
-    'promotion_code.created',
-    'promotion_code.updated',
+    "promotion_code.created",
+    "promotion_code.updated",
   )
 
   code = models.CharField(
     max_length=100,
     unique=True,
-    validators=[RegexValidator(
-      regex=r'^[A-Za-z0-9]+$',
-      message=_("Code must be alphanumeric"),
-    )],
+    validators=[
+      RegexValidator(
+        regex=r"^[A-Za-z0-9]+$",
+        message=_("Code must be alphanumeric"),
+      )
+    ],
     verbose_name=_("Code"),
-    help_text=_(
-      "Alphanumeric code with no spaces or symbols"
-    ),
+    help_text=_("Alphanumeric code with no spaces or symbols"),
   )
   times_redeemed = models.PositiveIntegerField(
     default=0,
@@ -581,36 +544,30 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
   max_redemptions = models.PositiveIntegerField(
     default=0,
     verbose_name=_("Maximum number of redemptions"),
-    help_text=_(
-      "Optional, leave blank for infinite redemptions"
-    ),
+    help_text=_("Optional, leave blank for infinite redemptions"),
   )
   expires_at = models.DateField(
     blank=True,
     null=True,
     verbose_name=_("Expires on"),
-    help_text=_(
-      "Optional, leave blank for no expiration date"
-    ),
+    help_text=_("Optional, leave blank for no expiration date"),
   )
   coupon = models.ForeignKey(
     Coupon,
     on_delete=models.PROTECT,
     db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='promotion_codes',
+    related_name="promotion_codes",
     verbose_name=_("Coupon"),
   )
   customer = models.ForeignKey(
-    'Customer',
+    "Customer",
     on_delete=models.SET_NULL,
     db_constraint=False,  # Stripe webhooks may arrive out of order
     null=True,
     blank=True,
     verbose_name=_("Customer"),
   )
-  active = models.BooleanField(
-    verbose_name=_("Active?")
-  )
+  active = models.BooleanField(verbose_name=_("Active?"))
 
   class Meta(StripeModel.Meta):
     verbose_name = _("Promotion Code")
@@ -623,9 +580,9 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
     if stripe_obj.promotion:
       stripe_coupon = stripe_obj.promotion.coupon
       if isinstance(stripe_coupon, stripe.Coupon):
-        data['coupon'] = stripe_coupon
+        data["coupon"] = stripe_coupon
       elif isinstance(stripe_coupon, str):
-        data['coupon_id'] = stripe_coupon
+        data["coupon_id"] = stripe_coupon
 
     return data
 
@@ -634,11 +591,11 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
 
   @property
   def redemptions(self) -> str:
-    count = f'{self.times_redeemed:,d}'
+    count = f"{self.times_redeemed:,d}"
     if self.max_redemptions:
-      maximum = f'{self.max_redemptions:,d}'
+      maximum = f"{self.max_redemptions:,d}"
     else:
-      maximum = '&infin;'
+      maximum = "&infin;"
     return mark_safe(f"{count} of {maximum}")
 
   def save(self, *args: Any, **kwargs: Any) -> None:
@@ -667,14 +624,14 @@ class Discount(StripeModel[stripe.Discount]):
   """
 
   API_EXPAND_FIELDS = (
-    'customer',
-    'promotion_code',
-    'source.coupon',
+    "customer",
+    "promotion_code",
+    "source.coupon",
   )
   WEBHOOK_EVENTS = (
-    'customer.discount.created',
-    'customer.discount.deleted',
-    'customer.discount.updated',
+    "customer.discount.created",
+    "customer.discount.deleted",
+    "customer.discount.updated",
   )
 
   start = models.DateTimeField(
@@ -689,49 +646,49 @@ class Discount(StripeModel[stripe.Discount]):
     Coupon,
     on_delete=models.PROTECT,
     db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='discounts',
+    related_name="discounts",
     verbose_name=_("Coupon"),
   )
   promotion_code = models.ForeignKey(
     PromotionCode,
     on_delete=models.PROTECT,
     db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='discounts',
+    related_name="discounts",
     null=True,
     blank=True,
   )
   customer = models.ForeignKey(
-    'Customer',
+    "Customer",
     on_delete=models.SET_NULL,
     db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='discounts',
+    related_name="discounts",
     verbose_name=_("Customer"),
     null=True,
-    blank=True
+    blank=True,
   )
   subscription = models.ForeignKey(
-    'Subscription',
+    "Subscription",
     on_delete=models.SET_NULL,
     db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='discounts',
+    related_name="discounts",
     verbose_name=_("Subscription"),
     null=True,
     blank=True,
   )
   subscription_item = models.ForeignKey(
-    'SubscriptionItem',
+    "SubscriptionItem",
     on_delete=models.SET_NULL,
     db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='discounts',
+    related_name="discounts",
     verbose_name=_("Subscription items"),
     null=True,
     blank=True,
   )
   invoice = models.ForeignKey(
-    'Invoice',
+    "Invoice",
     on_delete=models.SET_NULL,
     db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='discounts',
+    related_name="discounts",
     null=True,
     blank=True,
   )
@@ -744,12 +701,12 @@ class Discount(StripeModel[stripe.Discount]):
   def deserialize(cls, stripe_obj: stripe.Discount) -> dict[str, Any]:
     data = super().deserialize(stripe_obj)
 
-    if (source := getattr(stripe_obj, 'source', None)) is not None:
+    if (source := getattr(stripe_obj, "source", None)) is not None:
       stripe_coupon = source.coupon
       if isinstance(stripe_coupon, stripe.Coupon):
-        data['coupon'] = stripe_coupon
+        data["coupon"] = stripe_coupon
       elif isinstance(stripe_coupon, str):
-        data['coupon_id'] = stripe_coupon
+        data["coupon_id"] = stripe_coupon
 
     return data
 
@@ -765,9 +722,9 @@ class Customer(StripeModel[stripe.Customer]):
   """
 
   WEBHOOK_EVENTS = (
-    'customer.created',
-    'customer.deleted',
-    'customer.updated',
+    "customer.created",
+    "customer.deleted",
+    "customer.updated",
   )
 
   name = models.CharField(
@@ -792,7 +749,7 @@ class Customer(StripeModel[stripe.Customer]):
   class Meta(StripeModel.Meta):
     verbose_name = _("Customer")
     verbose_name_plural = _("Customers")
-    ordering = ['email']
+    ordering = ["email"]
 
   def __str__(self) -> str:
     return self.name or self.id
@@ -808,81 +765,81 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
 
   """
 
-  API_EXPAND_FIELDS = ('customer',)
+  API_EXPAND_FIELDS = ("customer",)
   WEBHOOK_EVENTS = (
-    'payment_method.attached',
-    'payment_method.automatically_updated',
-    'payment_method.detached',
-    'payment_method.updated',
+    "payment_method.attached",
+    "payment_method.automatically_updated",
+    "payment_method.detached",
+    "payment_method.updated",
   )
 
   TYPES = (
-    ('acss_debit', _("ACSS Debit (Canada/US)")),
-    ('affirm', _("Affirm")),
-    ('afterpay_clearpay', _("Afterpay / Clearpay")),
-    ('alipay', _("Alipay")),
-    ('alma', _("Alma")),
-    ('amazon_pay', _("Amazon Pay")),
-    ('au_becs_debit', _("BECS Debit (Australia)")),
-    ('bacs_debit', _("BACS Debit (UK)")),
-    ('bancontact', _("Bancontact (Belgium)")),
-    ('billie', _("Billie")),
-    ('blik', _("BLIK (Poland)")),
-    ('boleto', _("Boleto (Brazil)")),
-    ('card', _("Credit/Debit Card")),
-    ('card_present', _("Card Present")),
-    ('cashapp', _("Cash App Pay")),
-    ('crypto', _("Crypto")),
-    ('custom', _("Custom")),
-    ('customer_balance', _("Customer Balance")),
-    ('eps', _("EPS (Austria)")),
-    ('fpx', _("FPX (Malaysia)")),
-    ('giropay', _("giropay (Germany)")),
-    ('grabpay', _("GrabPay (Southeast Asia)")),
-    ('ideal', _("iDEAL (Netherlands)")),
-    ('interac_present', _("Interac (Terminal)")),
-    ('kakao_pay', _("Kakao Pay (South Korea)")),
-    ('klarna', _("Klarna")),
-    ('konbini', _("Konbini (Japan)")),
-    ('kr_card', _("Korean Card")),
-    ('link', _("Link")),
-    ('mb_way', _("MB WAY (Portugal)")),
-    ('mobilepay', _("MobilePay (Scandinavia)")),
-    ('multibanco', _("Multibanco (Portugal)")),
-    ('naver_pay', _("Naver Pay (South Korea)")),
-    ('nz_bank_account', _("Bank Account (New Zealand)")),
-    ('oxxo', _("OXXO (Mexico)")),
-    ('p24', _("Przelewy24 (Poland)")),
-    ('pay_by_bank', _("Pay by Bank")),
-    ('payco', _("PAYCO (South Korea)")),
-    ('paynow', _("PayNow (Singapore)")),
-    ('paypal', _("PayPal")),
-    ('payto', _("PayTo (Australia)")),
-    ('pix', _("Pix (Brazil)")),
-    ('promptpay', _("PromptPay (Thailand)")),
-    ('revolut_pay', _("Revolut Pay")),
-    ('samsung_pay', _("Samsung Pay")),
-    ('satispay', _("Satispay (Italy)")),
-    ('sepa_debit', _("SEPA Direct Debit (EU)")),
-    ('sofort', _("Sofort (Europe)")),
-    ('swish', _("Swish (Sweden)")),
-    ('twint', _("TWINT (Switzerland)")),
-    ('us_bank_account', _("Bank Account (US)")),
-    ('wechat_pay', _("WeChat Pay")),
-    ('zip', _("Zip")),
+    ("acss_debit", _("ACSS Debit (Canada/US)")),
+    ("affirm", _("Affirm")),
+    ("afterpay_clearpay", _("Afterpay / Clearpay")),
+    ("alipay", _("Alipay")),
+    ("alma", _("Alma")),
+    ("amazon_pay", _("Amazon Pay")),
+    ("au_becs_debit", _("BECS Debit (Australia)")),
+    ("bacs_debit", _("BACS Debit (UK)")),
+    ("bancontact", _("Bancontact (Belgium)")),
+    ("billie", _("Billie")),
+    ("blik", _("BLIK (Poland)")),
+    ("boleto", _("Boleto (Brazil)")),
+    ("card", _("Credit/Debit Card")),
+    ("card_present", _("Card Present")),
+    ("cashapp", _("Cash App Pay")),
+    ("crypto", _("Crypto")),
+    ("custom", _("Custom")),
+    ("customer_balance", _("Customer Balance")),
+    ("eps", _("EPS (Austria)")),
+    ("fpx", _("FPX (Malaysia)")),
+    ("giropay", _("giropay (Germany)")),
+    ("grabpay", _("GrabPay (Southeast Asia)")),
+    ("ideal", _("iDEAL (Netherlands)")),
+    ("interac_present", _("Interac (Terminal)")),
+    ("kakao_pay", _("Kakao Pay (South Korea)")),
+    ("klarna", _("Klarna")),
+    ("konbini", _("Konbini (Japan)")),
+    ("kr_card", _("Korean Card")),
+    ("link", _("Link")),
+    ("mb_way", _("MB WAY (Portugal)")),
+    ("mobilepay", _("MobilePay (Scandinavia)")),
+    ("multibanco", _("Multibanco (Portugal)")),
+    ("naver_pay", _("Naver Pay (South Korea)")),
+    ("nz_bank_account", _("Bank Account (New Zealand)")),
+    ("oxxo", _("OXXO (Mexico)")),
+    ("p24", _("Przelewy24 (Poland)")),
+    ("pay_by_bank", _("Pay by Bank")),
+    ("payco", _("PAYCO (South Korea)")),
+    ("paynow", _("PayNow (Singapore)")),
+    ("paypal", _("PayPal")),
+    ("payto", _("PayTo (Australia)")),
+    ("pix", _("Pix (Brazil)")),
+    ("promptpay", _("PromptPay (Thailand)")),
+    ("revolut_pay", _("Revolut Pay")),
+    ("samsung_pay", _("Samsung Pay")),
+    ("satispay", _("Satispay (Italy)")),
+    ("sepa_debit", _("SEPA Direct Debit (EU)")),
+    ("sofort", _("Sofort (Europe)")),
+    ("swish", _("Swish (Sweden)")),
+    ("twint", _("TWINT (Switzerland)")),
+    ("us_bank_account", _("Bank Account (US)")),
+    ("wechat_pay", _("WeChat Pay")),
+    ("zip", _("Zip")),
   )
   CARD_BRANDS = (
-    ('amex', _("American Express")),
-    ('cartes_bancaires', _("Cartes Bancaires")),
-    ('diners', _("Diners Club")),
-    ('discover', _("Discover")),
-    ('eftpos_au', _("EFTPOS Australia")),
-    ('jcb', _("JCB")),
-    ('link', _("Link")),
-    ('mastercard', _("MasterCard")),
-    ('unionpay', _("UnionPay")),
-    ('visa', _("Visa")),
-    ('unknown', _("Unknown")),
+    ("amex", _("American Express")),
+    ("cartes_bancaires", _("Cartes Bancaires")),
+    ("diners", _("Diners Club")),
+    ("discover", _("Discover")),
+    ("eftpos_au", _("EFTPOS Australia")),
+    ("jcb", _("JCB")),
+    ("link", _("Link")),
+    ("mastercard", _("MasterCard")),
+    ("unionpay", _("UnionPay")),
+    ("visa", _("Visa")),
+    ("unknown", _("Unknown")),
   )
 
   type = models.CharField(
@@ -902,7 +859,7 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
     Customer,
     on_delete=models.SET_NULL,
     db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='payment_methods',
+    related_name="payment_methods",
     null=True,
     blank=True,
     verbose_name=_("Customer"),
@@ -915,14 +872,14 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
   @classmethod
   def deserialize(cls, stripe_obj: stripe.PaymentMethod) -> dict[str, Any]:
     data = super().deserialize(stripe_obj)
-    data['details'] = getattr(stripe_obj, stripe_obj.type)
+    data["details"] = getattr(stripe_obj, stripe_obj.type)
     return data
 
   def __str__(self) -> str:
-    if self.type == 'card':
+    if self.type == "card":
       s = "{brand} ({last4})".format(
-        brand=dict(self.CARD_BRANDS)[self.details.get('brand', 'unknown')],
-        last4=self.details.get('last4', '0000'),
+        brand=dict(self.CARD_BRANDS)[self.details.get("brand", "unknown")],
+        last4=self.details.get("last4", "0000"),
       )
     else:  # TODO add more formats
       s = self.get_type_display()
@@ -943,7 +900,7 @@ class FundingInstructions(models.Model):
     Customer,
     on_delete=models.CASCADE,
     db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='funding_instructions',
+    related_name="funding_instructions",
     verbose_name=_("Customer"),
   )
   account_holder_name = models.CharField(
@@ -992,18 +949,20 @@ class FundingInstructions(models.Model):
   ) -> dict[str, Any]:
     data: dict[str, Any] = {}
     for fa in stripe_obj.bank_transfer.financial_addresses:
-      if (fa.type == 'aba') and (fa.aba is not None):
-        data.update({
-          'account_holder_address': dict(fa.aba.account_holder_address),
-          'account_holder_name': fa.aba.account_holder_name,
-          'account_number': fa.aba.account_number,
-          'account_type': fa.aba.account_type,
-          'bank_address': dict(fa.aba.bank_address),
-          'bank_name': fa.aba.bank_name,
-          'routing_number': fa.aba.routing_number,
-        })
-      elif (fa.type == 'swift') and (fa.swift is not None):
-        data['swift_code'] = fa.swift.swift_code
+      if (fa.type == "aba") and (fa.aba is not None):
+        data.update(
+          {
+            "account_holder_address": dict(fa.aba.account_holder_address),
+            "account_holder_name": fa.aba.account_holder_name,
+            "account_number": fa.aba.account_number,
+            "account_type": fa.aba.account_type,
+            "bank_address": dict(fa.aba.bank_address),
+            "bank_name": fa.aba.bank_name,
+            "routing_number": fa.aba.routing_number,
+          }
+        )
+      elif (fa.type == "swift") and (fa.swift is not None):
+        data["swift_code"] = fa.swift.swift_code
 
     return data
 
@@ -1021,38 +980,36 @@ class PaymentIntent(StripeModel[stripe.PaymentIntent]):
 
   """
 
-  API_EXPAND_FIELDS = ('customer', 'payment_method')
+  API_EXPAND_FIELDS = ("customer", "payment_method")
   WEBHOOK_EVENTS = (
-    'payment_intent.amount_capturable_updated',
-    'payment_intent.canceled',
-    'payment_intent.created',
-    'payment_intent.partially_funded',
-    'payment_intent.payment_failed',
-    'payment_intent.processing',
-    'payment_intent.requires_action',
-    'payment_intent.succeeded',
+    "payment_intent.amount_capturable_updated",
+    "payment_intent.canceled",
+    "payment_intent.created",
+    "payment_intent.partially_funded",
+    "payment_intent.payment_failed",
+    "payment_intent.processing",
+    "payment_intent.requires_action",
+    "payment_intent.succeeded",
   )
 
   FUTURE_USAGES = (
-    ('on_session', _("On Session")),
-    ('off_session', _("Off Session")),
+    ("on_session", _("On Session")),
+    ("off_session", _("Off Session")),
   )
   STATUSES = (
-    ('requires_payment_method', _("Requires payment method")),
-    ('requires_confirmation', _("Requires confirmation")),
-    ('requires_action', _("Requires action")),
-    ('processing', _("Processing")),
-    ('requires_capture', _("Requires capture")),
-    ('canceled', _("Canceled")),
-    ('succeeded', _("Succeeded")),
+    ("requires_payment_method", _("Requires payment method")),
+    ("requires_confirmation", _("Requires confirmation")),
+    ("requires_action", _("Requires action")),
+    ("processing", _("Processing")),
+    ("requires_capture", _("Requires capture")),
+    ("canceled", _("Canceled")),
+    ("succeeded", _("Succeeded")),
   )
 
   description = models.CharField(
     max_length=255,
     verbose_name=_("Description"),
-    help_text=_(
-      "Description of this charge that will be displayed to customers"
-    ),
+    help_text=_("Description of this charge that will be displayed to customers"),
   )
   status = models.CharField(
     max_length=23,
@@ -1068,9 +1025,7 @@ class PaymentIntent(StripeModel[stripe.PaymentIntent]):
     max_digits=8,
     decimal_places=2,
     verbose_name=_("Amount"),
-    help_text=_(
-      "Amount to be collected"
-    ),
+    help_text=_("Amount to be collected"),
   )
   setup_future_usage = models.CharField(
     max_length=11,
@@ -1100,14 +1055,14 @@ class PaymentIntent(StripeModel[stripe.PaymentIntent]):
     Customer,
     on_delete=models.CASCADE,
     db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='payment_intents',
+    related_name="payment_intents",
     verbose_name=_("Customer"),
   )
   payment_method = models.ForeignKey(
     PaymentMethod,
     on_delete=models.SET_NULL,
     db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='payment_intents',
+    related_name="payment_intents",
     blank=True,
     null=True,
     verbose_name=_("Payment method"),
@@ -1147,18 +1102,18 @@ class ConfirmationToken(models.Model):
     Customer,
     on_delete=models.CASCADE,
     db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='confirmation_tokens',
+    related_name="confirmation_tokens",
     verbose_name=_("Customer"),
   )
 
   class Meta:
     verbose_name = _("Confirmation Token")
     verbose_name_plural = _("Confirmation Tokens")
-    ordering = ['customer', '-created']
-    get_latest_by = 'created'
+    ordering = ["customer", "-created"]
+    get_latest_by = "created"
 
   def __str__(self) -> str:
-    pm_type = self.payment_method_preview.get('type', 'unknown')
+    pm_type = self.payment_method_preview.get("type", "unknown")
     pm = PaymentMethod(
       type=pm_type,
       details=self.payment_method_preview[pm_type],
@@ -1167,7 +1122,7 @@ class ConfirmationToken(models.Model):
 
   @property
   def is_expired(self) -> bool:
-    return (self.expires_at < timezone.now())
+    return self.expires_at < timezone.now()
 
 
 class Subscription(StripeModel[stripe.Subscription]):
@@ -1181,41 +1136,41 @@ class Subscription(StripeModel[stripe.Subscription]):
   """
 
   API_EXPAND_FIELDS = (
-    'customer',
-    'discounts.promotion_code.coupon',
-    'default_payment_method.customer',
+    "customer",
+    "discounts.promotion_code.coupon",
+    "default_payment_method.customer",
   )
   WEBHOOK_EVENTS = (
-    'customer.subscription.created',
-    'customer.subscription.deleted',
-    'customer.subscription.paused',
-    'customer.subscription.pending_update_applied',
-    'customer.subscription.pending_update_expired',
-    'customer.subscription.resumed',
-    'customer.subscription.trial_will_end',
-    'customer.subscription.updated',
+    "customer.subscription.created",
+    "customer.subscription.deleted",
+    "customer.subscription.paused",
+    "customer.subscription.pending_update_applied",
+    "customer.subscription.pending_update_expired",
+    "customer.subscription.resumed",
+    "customer.subscription.trial_will_end",
+    "customer.subscription.updated",
   )
 
   STATUSES = (
-    ('incomplete', _("Incomplete")),
-    ('incomplete_expired', _("Incomplete expired")),
-    ('trialing', _("Trial")),
-    ('active', _("Active")),
-    ('past_due', _("Past due")),
-    ('canceled', _("Canceled")),
-    ('unpaid', _("Unpaid")),
+    ("incomplete", _("Incomplete")),
+    ("incomplete_expired", _("Incomplete expired")),
+    ("trialing", _("Trial")),
+    ("active", _("Active")),
+    ("past_due", _("Past due")),
+    ("canceled", _("Canceled")),
+    ("unpaid", _("Unpaid")),
   )
   ACTIVE_STATUSES = (
-    'trialing',
-    'active',
+    "trialing",
+    "active",
   )
   TERMINAL_STATUSES = (
-    'incomplete_expired',
-    'canceled',
+    "incomplete_expired",
+    "canceled",
   )
   COLLECTION_METHODS = (
-    ('charge_automatically', _("Charge automatically")),
-    ('send_invoice', _("Send invoice")),
+    ("charge_automatically", _("Charge automatically")),
+    ("send_invoice", _("Send invoice")),
   )
 
   status = models.CharField(
@@ -1231,21 +1186,21 @@ class Subscription(StripeModel[stripe.Subscription]):
     choices=COLLECTION_METHODS,
     verbose_name=_("Collection method"),
     help_text=_(
-      "Charge using the default source on file or email invoice with instructions"  # noqa: E501
+      "Charge using the default source on file or email invoice with instructions"
     ),
   )
   customer = models.ForeignKey(
     Customer,
     on_delete=models.PROTECT,
     db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='subscriptions',
+    related_name="subscriptions",
     verbose_name=_("Customer"),
   )
   default_payment_method = models.ForeignKey(
     PaymentMethod,
     on_delete=models.PROTECT,
     db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='subscriptions',
+    related_name="subscriptions",
     blank=True,
     null=True,
     verbose_name=_("Default payment method"),
@@ -1276,7 +1231,7 @@ class SubscriptionItem(StripeModel[stripe.SubscriptionItem]):
     Price,
     on_delete=models.PROTECT,
     db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='subscription_items',
+    related_name="subscription_items",
     verbose_name=_("Price"),
   )
   quantity = models.PositiveIntegerField(
@@ -1286,7 +1241,7 @@ class SubscriptionItem(StripeModel[stripe.SubscriptionItem]):
     Subscription,
     on_delete=models.CASCADE,
     db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='items',
+    related_name="items",
     verbose_name=_("Subscription"),
   )
 
@@ -1296,8 +1251,8 @@ class SubscriptionItem(StripeModel[stripe.SubscriptionItem]):
 
     constraints = [
       models.UniqueConstraint(
-        fields=['price', 'subscription'],
-        name='unique_item',
+        fields=["price", "subscription"],
+        name="unique_item",
       ),
     ]
 
@@ -1313,38 +1268,38 @@ class Invoice(StripeModel[stripe.Invoice]):
   """
 
   API_EXPAND_FIELDS = (
-    'customer',
-    'discounts',
-    'parent.subscription_details.subscription.discounts',
-    'payments.data.payment.payment_intent',
+    "customer",
+    "discounts",
+    "parent.subscription_details.subscription.discounts",
+    "payments.data.payment.payment_intent",
   )
   WEBHOOK_EVENTS = (
-    'invoice.created',
-    'invoice.deleted',
-    'invoice.finalization_failed',
-    'invoice.finalized',
-    'invoice.marked_uncollectible',
-    'invoice.overdue',
-    'invoice.paid',
-    'invoice.payment_action_required',
-    'invoice.payment_failed',
-    'invoice.payment_succeeded',
-    'invoice.sent',
-    'invoice.updated',
-    'invoice.voided',
-    'invoice.will_be_due',
+    "invoice.created",
+    "invoice.deleted",
+    "invoice.finalization_failed",
+    "invoice.finalized",
+    "invoice.marked_uncollectible",
+    "invoice.overdue",
+    "invoice.paid",
+    "invoice.payment_action_required",
+    "invoice.payment_failed",
+    "invoice.payment_succeeded",
+    "invoice.sent",
+    "invoice.updated",
+    "invoice.voided",
+    "invoice.will_be_due",
   )
 
   COLLECTION_METHODS = (
-    ('charge_automatically', _("Charge automatically")),
-    ('send_invoice', _("Send invoice")),
+    ("charge_automatically", _("Charge automatically")),
+    ("send_invoice", _("Send invoice")),
   )
   STATUSES = (
-    ('draft', _("Draft")),
-    ('open', _("Open")),
-    ('paid', _("Paid")),
-    ('uncollectible', _("Uncollectible")),
-    ('void', _("Void")),
+    ("draft", _("Draft")),
+    ("open", _("Open")),
+    ("paid", _("Paid")),
+    ("uncollectible", _("Uncollectible")),
+    ("void", _("Void")),
   )
 
   created = models.DateTimeField(
@@ -1368,89 +1323,67 @@ class Invoice(StripeModel[stripe.Invoice]):
     max_digits=8,
     decimal_places=2,
     verbose_name=_("Amount Due"),
-    help_text=_(
-      "Final amount due at this time"
-    ),
+    help_text=_("Final amount due at this time"),
   )
   amount_paid = MoneyField(
     max_digits=8,
     decimal_places=2,
     verbose_name=_("Amount Paid"),
-    help_text=_(
-      "Amount that was paid by the customer, if any"
-    ),
+    help_text=_("Amount that was paid by the customer, if any"),
   )
   amount_overpaid = MoneyField(
     max_digits=8,
     decimal_places=2,
     verbose_name=_("Amount Overpaid"),
-    help_text=_(
-      "Amount that was overpaid by the customer, if any"
-    ),
+    help_text=_("Amount that was overpaid by the customer, if any"),
   )
   amount_remaining = MoneyField(
     max_digits=8,
     decimal_places=2,
     verbose_name=_("Amount Remaining"),
-    help_text=_(
-      "Amount remaining to be paid by the customer, if any"
-    ),
+    help_text=_("Amount remaining to be paid by the customer, if any"),
   )
   amount_shipping = MoneyField(
     max_digits=8,
     decimal_places=2,
     verbose_name=_("Amount Shipping"),
-    help_text=_(
-      "Shipping costs, if any"
-    ),
+    help_text=_("Shipping costs, if any"),
   )
   total_taxes_amount = MoneyField(
     max_digits=8,
     decimal_places=2,
     verbose_name=_("Tax"),
-    help_text=_(
-      "Total applicable taxes"
-    ),
+    help_text=_("Total applicable taxes"),
   )
   total_discounts_amount = MoneyField(
     max_digits=8,
     decimal_places=2,
     verbose_name=_("Discount"),
-    help_text=_(
-      "Total discounts"
-    ),
+    help_text=_("Total discounts"),
   )
   subtotal_excluding_tax = MoneyField(
     max_digits=8,
     decimal_places=2,
     verbose_name=_("Subtotal excluding tax"),
-    help_text=_(
-      "Total after item discounts and before taxes"
-    ),
+    help_text=_("Total after item discounts and before taxes"),
   )
   subtotal = MoneyField(
     max_digits=8,
     decimal_places=2,
     verbose_name=_("Subtotal"),
-    help_text=_(
-      "Total before discounts and taxes"
-    ),
+    help_text=_("Total before discounts and taxes"),
   )
   total_excluding_tax = MoneyField(
     max_digits=8,
     decimal_places=2,
     verbose_name=_("Total excluding tax"),
-    help_text=_(
-      "Total after all discounts and before taxes"
-    ),
+    help_text=_("Total after all discounts and before taxes"),
   )
   total = MoneyField(
     max_digits=8,
     decimal_places=2,
     verbose_name=_("Total"),
-    help_text=_(
-      "Total after discounts and taxes"
-    ),
+    help_text=_("Total after discounts and taxes"),
   )
   period_start = models.DateTimeField(
     verbose_name=_("Period start"),
@@ -1463,7 +1396,7 @@ class Invoice(StripeModel[stripe.Invoice]):
     choices=COLLECTION_METHODS,
     verbose_name=_("Collection method"),
     help_text=_(
-      "Charge using the default source on file or email invoice with instructions"  # noqa: E501
+      "Charge using the default source on file or email invoice with instructions"
     ),
   )
   invoice_pdf = models.URLField(
@@ -1478,14 +1411,14 @@ class Invoice(StripeModel[stripe.Invoice]):
     Customer,
     on_delete=models.PROTECT,
     db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='invoices',
+    related_name="invoices",
     verbose_name=_("Customer"),
   )
   subscription = models.ForeignKey(
     Subscription,
     on_delete=models.SET_NULL,
     db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='invoices',
+    related_name="invoices",
     blank=True,
     null=True,
     verbose_name=_("Subscription"),
@@ -1494,7 +1427,7 @@ class Invoice(StripeModel[stripe.Invoice]):
   class Meta(StripeModel.Meta):
     verbose_name = _("Invoice")
     verbose_name_plural = _("Invoices")
-    get_latest_by = 'created'
+    get_latest_by = "created"
 
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Invoice) -> dict[str, Any]:
@@ -1503,18 +1436,18 @@ class Invoice(StripeModel[stripe.Invoice]):
     if stripe_obj.parent and stripe_obj.parent.subscription_details:
       stripe_sub = stripe_obj.parent.subscription_details.subscription
       if isinstance(stripe_sub, stripe.Subscription):
-        data['subscription'] = stripe_sub
+        data["subscription"] = stripe_sub
       elif isinstance(stripe_sub, str):
-        data['subscription_id'] = stripe_sub
+        data["subscription_id"] = stripe_sub
 
     divisor = CURRENCY_DIVISOR[stripe_obj.currency]
-    data['total_discounts_amount'] = Decimal(0)
-    for discount in (stripe_obj.total_discount_amounts or []):
-      data['total_discounts_amount'] -= Decimal(discount.amount / divisor)
+    data["total_discounts_amount"] = Decimal(0)
+    for discount in stripe_obj.total_discount_amounts or []:
+      data["total_discounts_amount"] -= Decimal(discount.amount / divisor)
 
-    data['total_taxes_amount'] = Decimal(0)
-    for tax in (stripe_obj.total_taxes or []):
-      data['total_taxes_amount'] += Decimal(tax.amount / divisor)
+    data["total_taxes_amount"] = Decimal(0)
+    for tax in stripe_obj.total_taxes or []:
+      data["total_taxes_amount"] += Decimal(tax.amount / divisor)
 
     return data
 
@@ -1570,7 +1503,7 @@ class InvoiceLineItem(StripeModel[stripe.StripeObject]):
     Invoice,
     on_delete=models.CASCADE,
     db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='lines',
+    related_name="lines",
     verbose_name=_("Invoice"),
   )
   price = models.ForeignKey(
@@ -1579,7 +1512,7 @@ class InvoiceLineItem(StripeModel[stripe.StripeObject]):
     db_constraint=False,  # Stripe webhooks may arrive out of order
     null=True,
     blank=True,
-    related_name='invoice_line_items',
+    related_name="invoice_line_items",
     verbose_name=_("Price"),
   )
   product = models.ForeignKey(
@@ -1588,7 +1521,7 @@ class InvoiceLineItem(StripeModel[stripe.StripeObject]):
     db_constraint=False,  # Stripe webhooks may arrive out of order
     null=True,
     blank=True,
-    related_name='invoice_line_items',
+    related_name="invoice_line_items",
     verbose_name=_("Product"),
   )
 
@@ -1600,20 +1533,22 @@ class InvoiceLineItem(StripeModel[stripe.StripeObject]):
   def deserialize(cls, stripe_obj: stripe.StripeObject) -> dict[str, Any]:
     data = super().deserialize(stripe_obj)
 
-    if (period := stripe_obj.get('period')) is not None:
-      data['period_start'] = dt.datetime.fromtimestamp(
-        period['start'], tz=dt.timezone.utc,
+    if (period := stripe_obj.get("period")) is not None:
+      data["period_start"] = dt.datetime.fromtimestamp(
+        period["start"],
+        tz=dt.UTC,
       )
-      data['period_end'] = dt.datetime.fromtimestamp(
-        period['end'], tz=dt.timezone.utc,
+      data["period_end"] = dt.datetime.fromtimestamp(
+        period["end"],
+        tz=dt.UTC,
       )
 
-    if (pricing := stripe_obj.get('pricing')) is not None:
-      if (price_details := pricing.get('price_details')) is not None:
-        if (price_id := price_details.get('price')) is not None:
-          data['price_id'] = price_id
-        if (product_id := price_details.get('product')) is not None:
-          data['product_id'] = product_id
+    if (pricing := stripe_obj.get("pricing")) is not None:
+      if (price_details := pricing.get("price_details")) is not None:
+        if (price_id := price_details.get("price")) is not None:
+          data["price_id"] = price_id
+        if (product_id := price_details.get("product")) is not None:
+          data["product_id"] = product_id
 
     return data
 
@@ -1629,14 +1564,14 @@ class InvoicePayment(StripeModel[stripe.StripeObject]):
   """
 
   API_EXPAND_FIELDS = (
-    'invoice',
-    'payment.payment_intent',
+    "invoice",
+    "payment.payment_intent",
   )
 
   STATUSES = (
-    ('open', _("Open")),
-    ('paid', _("Paid")),
-    ('canceled', _("Canceled")),
+    ("open", _("Open")),
+    ("paid", _("Paid")),
+    ("canceled", _("Canceled")),
   )
 
   created = models.DateTimeField(
@@ -1671,14 +1606,14 @@ class InvoicePayment(StripeModel[stripe.StripeObject]):
     db_constraint=False,  # Stripe webhooks may arrive out of order
     null=True,
     blank=True,
-    related_name='invoice_payments',
+    related_name="invoice_payments",
     verbose_name=_("Payment intent"),
   )
   invoice = models.ForeignKey(
     Invoice,
     on_delete=models.CASCADE,
     db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='payments',
+    related_name="payments",
     verbose_name=_("Invoice"),
   )
   is_default = models.BooleanField(
@@ -1693,13 +1628,13 @@ class InvoicePayment(StripeModel[stripe.StripeObject]):
   def deserialize(cls, stripe_obj: stripe.StripeObject) -> dict[str, Any]:
     data = super().deserialize(stripe_obj)
 
-    if (payment := stripe_obj.get('payment')) is not None:
-      if payment.get('type') == 'payment_intent':
-        pi = payment.get('payment_intent')
+    if (payment := stripe_obj.get("payment")) is not None:
+      if payment.get("type") == "payment_intent":
+        pi = payment.get("payment_intent")
         if isinstance(pi, stripe.PaymentIntent):
-          data['payment_intent'] = pi
+          data["payment_intent"] = pi
         elif isinstance(pi, str):
-          data['payment_intent_id'] = pi
+          data["payment_intent_id"] = pi
 
     return data
 
@@ -1715,42 +1650,42 @@ class BalanceTransaction(StripeModel[stripe.BalanceTransaction]):
   """
 
   TYPES = (
-    ('adjustment', _("Adjustment")),
-    ('advance', _("Advance")),
-    ('advance_funding', _("Advance funding")),
-    ('anticipation_repayment', _("Anticipation repayment")),
-    ('application_fee', _("Application fee")),
-    ('application_fee_refund', _("Application fee refund")),
-    ('charge', _("Charge")),
-    ('connect_collection_transfer', _("Connect collection transfer")),
-    ('contribution', _("Contribution")),
-    ('issuing_authorization_hold', _("Issuing authorization hold")),
-    ('issuing_authorization_release', _("Issuing authorization release")),
-    ('issuing_dispute', _("Issuing dispute")),
-    ('issuing_transaction', _("Issuing transaction")),
-    ('payment', _("Payment")),
-    ('payment_failure_refund', _("Payment failure refund")),
-    ('payment_refund', _("Payment refund")),
-    ('payout', _("Payout")),
-    ('payout_cancel', _("Payout cancel")),
-    ('payout_failure', _("Payout failure")),
-    ('refund', _("Refund")),
-    ('refund_failure', _("Refund failure")),
-    ('reserve_transaction', _("Reserve transaction")),
-    ('reserved_funds', _("Reserved funds")),
-    ('stripe_fee', _("Stripe fee")),
-    ('stripe_fx_fee', _("Stripe currency conversion fee")),
-    ('tax_fee', _("Taxes collected by Stripe")),
-    ('topup', _("Topup")),
-    ('topup_reversal', _("Topup reversal")),
-    ('transfer', _("Transfer")),
-    ('transfer_cancel', _("Transfer cancelled")),
-    ('transfer_failure', _("Transfer failure")),
-    ('transfer_refund', _("Transfer refund")),
+    ("adjustment", _("Adjustment")),
+    ("advance", _("Advance")),
+    ("advance_funding", _("Advance funding")),
+    ("anticipation_repayment", _("Anticipation repayment")),
+    ("application_fee", _("Application fee")),
+    ("application_fee_refund", _("Application fee refund")),
+    ("charge", _("Charge")),
+    ("connect_collection_transfer", _("Connect collection transfer")),
+    ("contribution", _("Contribution")),
+    ("issuing_authorization_hold", _("Issuing authorization hold")),
+    ("issuing_authorization_release", _("Issuing authorization release")),
+    ("issuing_dispute", _("Issuing dispute")),
+    ("issuing_transaction", _("Issuing transaction")),
+    ("payment", _("Payment")),
+    ("payment_failure_refund", _("Payment failure refund")),
+    ("payment_refund", _("Payment refund")),
+    ("payout", _("Payout")),
+    ("payout_cancel", _("Payout cancel")),
+    ("payout_failure", _("Payout failure")),
+    ("refund", _("Refund")),
+    ("refund_failure", _("Refund failure")),
+    ("reserve_transaction", _("Reserve transaction")),
+    ("reserved_funds", _("Reserved funds")),
+    ("stripe_fee", _("Stripe fee")),
+    ("stripe_fx_fee", _("Stripe currency conversion fee")),
+    ("tax_fee", _("Taxes collected by Stripe")),
+    ("topup", _("Topup")),
+    ("topup_reversal", _("Topup reversal")),
+    ("transfer", _("Transfer")),
+    ("transfer_cancel", _("Transfer cancelled")),
+    ("transfer_failure", _("Transfer failure")),
+    ("transfer_refund", _("Transfer refund")),
   )
   STATUSES = (
-    ('available', _("Available")),
-    ('pending', _("Pending")),
+    ("available", _("Available")),
+    ("pending", _("Pending")),
   )
 
   type = models.CharField(
@@ -1776,35 +1711,28 @@ class BalanceTransaction(StripeModel[stripe.BalanceTransaction]):
     decimal_places=2,
     is_balance=True,
     verbose_name=_("Amount"),
-    help_text=_(
-      "Gross amount of this "
-      "transaction"
-    ),
+    help_text=_("Gross amount of this transaction"),
   )
   fee = MoneyField(
     max_digits=8,
     decimal_places=2,
     is_balance=True,
     verbose_name=_("Fee"),
-    help_text=_(
-      "Fee paid for this transaction"
-    ),
+    help_text=_("Fee paid for this transaction"),
   )
   net = MoneyField(
     max_digits=8,
     decimal_places=2,
     is_balance=True,
     verbose_name=_("Net"),
-    help_text=_(
-      "Net amount of this transaction"
-    ),
+    help_text=_("Net amount of this transaction"),
   )
 
   class Meta(StripeModel.Meta):
     verbose_name = _("Balance Transaction")
     verbose_name_plural = _("Balance Transactions")
-    ordering = ['-available_on', '-pk']
-    get_latest_by = 'available_on'
+    ordering = ["-available_on", "-pk"]
+    get_latest_by = "available_on"
 
 
 class Charge(StripeModel[stripe.Charge]):
@@ -1818,31 +1746,31 @@ class Charge(StripeModel[stripe.Charge]):
   """
 
   API_EXPAND_FIELDS = (
-    'customer',
-    'payment_intent',
-    'balance_transaction',
+    "customer",
+    "payment_intent",
+    "balance_transaction",
   )
   WEBHOOK_EVENTS = (
-    'charge.captured',
-    'charge.expired',
-    'charge.failed',
-    'charge.pending',
-    'charge.refunded',
-    'charge.succeeded',
-    'charge.updated',
+    "charge.captured",
+    "charge.expired",
+    "charge.failed",
+    "charge.pending",
+    "charge.refunded",
+    "charge.succeeded",
+    "charge.updated",
   )
 
   STATUSES = (
-    ('succeeded', _("Succeeded")),
-    ('pending', _("Pending")),
-    ('failed', _("Failed")),
+    ("succeeded", _("Succeeded")),
+    ("pending", _("Pending")),
+    ("failed", _("Failed")),
   )
 
   customer = models.ForeignKey(
     Customer,
     on_delete=models.PROTECT,
     db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='charges',
+    related_name="charges",
     verbose_name=_("Customer"),
   )
   created = models.DateTimeField(
@@ -1853,7 +1781,7 @@ class Charge(StripeModel[stripe.Charge]):
     blank=True,
     verbose_name=_("Description"),
     help_text=_(
-      "Optional description that may be used to display information to customers"  # noqa: E501
+      "Optional description that may be used to display information to customers"
     ),
   )
   status = models.CharField(
@@ -1871,9 +1799,7 @@ class Charge(StripeModel[stripe.Charge]):
     decimal_places=2,
     is_balance=True,
     verbose_name=_("Amount"),
-    help_text=_(
-      "Total amount to be collected by this payment"
-    ),
+    help_text=_("Total amount to be collected by this payment"),
   )
   receipt_email = models.EmailField(
     verbose_name=_("Receipt email"),
@@ -1886,7 +1812,7 @@ class Charge(StripeModel[stripe.Charge]):
     PaymentIntent,
     on_delete=models.SET_NULL,
     db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='charges',
+    related_name="charges",
     verbose_name=_("Payment intent"),
     blank=True,
     null=True,
@@ -1895,7 +1821,7 @@ class Charge(StripeModel[stripe.Charge]):
     BalanceTransaction,
     on_delete=models.PROTECT,
     db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='charges',
+    related_name="charges",
     null=True,
     blank=True,
     verbose_name=_("Balance transaction"),
@@ -1905,16 +1831,14 @@ class Charge(StripeModel[stripe.Charge]):
   )
   refunded = models.BooleanField(
     verbose_name=_("Refunded?"),
-    help_text=_(
-      "Only 'True' if the Charge has been fully refunded"
-    ),
+    help_text=_("Only 'True' if the Charge has been fully refunded"),
   )
 
   class Meta(StripeModel.Meta):
     verbose_name = _("Charge")
     verbose_name_plural = _("Charges")
-    ordering = ['-created']
-    get_latest_by = 'created'
+    ordering = ["-created"]
+    get_latest_by = "created"
 
 
 class Refund(StripeModel[stripe.Refund]):
@@ -1928,33 +1852,31 @@ class Refund(StripeModel[stripe.Refund]):
   """
 
   API_EXPAND_FIELDS = (
-    'charge.balance_transaction',
-    'balance_transaction',
+    "charge.balance_transaction",
+    "balance_transaction",
   )
   WEBHOOK_EVENTS = (
-    'refund.created',
-    'refund.failed',
-    'refund.updated',
+    "refund.created",
+    "refund.failed",
+    "refund.updated",
   )
 
   REASONS = (
-    ('duplicate', _("Duplicate charge")),
-    ('fraudulent', _("Fraudulent charge")),
-    ('requested_by_customer', _("Requested by customer")),
+    ("duplicate", _("Duplicate charge")),
+    ("fraudulent", _("Fraudulent charge")),
+    ("requested_by_customer", _("Requested by customer")),
   )
   STATUSES = (
-    ('pending', _("Pending")),
-    ('succeeded', _("Succeeded")),
-    ('failed', _("Failed")),
+    ("pending", _("Pending")),
+    ("succeeded", _("Succeeded")),
+    ("failed", _("Failed")),
   )
 
   reason = models.CharField(
     max_length=25,
     choices=REASONS,
     verbose_name=_("Reason"),
-    help_text=_(
-      "Select reason for refund"
-    ),
+    help_text=_("Select reason for refund"),
   )
   status = models.CharField(
     max_length=25,
@@ -1971,25 +1893,21 @@ class Refund(StripeModel[stripe.Refund]):
     decimal_places=2,
     is_balance=True,
     verbose_name=_("Amount"),
-    help_text=_(
-      "Amount to be refunded"
-    ),
+    help_text=_("Amount to be refunded"),
   )
   charge = models.ForeignKey(
     Charge,
     on_delete=models.CASCADE,
     db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='refunds',
+    related_name="refunds",
     verbose_name=_("Charge"),
-    help_text=_(
-      "The charge to be refunded"
-    ),
+    help_text=_("The charge to be refunded"),
   )
   balance_transaction = models.ForeignKey(
     BalanceTransaction,
     on_delete=models.SET_NULL,
     db_constraint=False,  # Stripe webhooks may arrive out of order
-    related_name='refunds',
+    related_name="refunds",
     blank=True,
     null=True,
     verbose_name=_("Balance transaction"),

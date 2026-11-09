@@ -1,7 +1,6 @@
 from typing import Any, cast
 
 import stripe
-
 from django.conf import settings
 from django.http import HttpRequest, HttpResponse
 from django.utils.decorators import method_decorator
@@ -11,14 +10,12 @@ from django.views.generic.base import View
 from django_stripe_hooks.models import StripeModel
 from django_stripe_hooks.utils import StripeService, fetch
 
-
 DJANGO_MODELS = {
-  DjangoModel.__name__: DjangoModel
-  for DjangoModel in StripeModel.__subclasses__()
+  DjangoModel.__name__: DjangoModel for DjangoModel in StripeModel.__subclasses__()
 }
 
 
-@method_decorator(csrf_exempt, name='dispatch')
+@method_decorator(csrf_exempt, name="dispatch")
 class StripeWebhooks(View):
   """Intercept Stripe webhooks and update local database."""
 
@@ -26,20 +23,22 @@ class StripeWebhooks(View):
 
   @property
   def stripe_name(self) -> str:
-    return cast(str, self.event.data.object['object'])  # mypy wants key access
+    return cast(str, self.event.data.object["object"])  # mypy wants key access
 
   def resolve_django_model(self) -> type[StripeModel[Any]]:
-    django_model_name = ''.join(map(
-      lambda s: s.title(),
-      self.stripe_name.split('_'),
-    ))
+    django_model_name = "".join(
+      map(
+        lambda s: s.title(),
+        self.stripe_name.split("_"),
+      )
+    )
     return DJANGO_MODELS[django_model_name]
 
   def post(self, request: HttpRequest) -> HttpResponse:
     # Construct the event
     self.event = self.stripe_client.construct_event(
       payload=request.body,
-      sig_header=request.META['HTTP_STRIPE_SIGNATURE'],
+      sig_header=request.META["HTTP_STRIPE_SIGNATURE"],
       secret=settings.STRIPE_WEBHOOK_SECRET_KEY,
     )
 
@@ -54,11 +53,11 @@ class StripeWebhooks(View):
       )
     else:
       # Fetch the Stripe object, falling back on the event data
-      service = getattr(self.stripe_client.v1, f'{self.stripe_name}s', None)
+      service = getattr(self.stripe_client.v1, f"{self.stripe_name}s", None)
       if isinstance(service, StripeService):
         self.stripe_obj = fetch(
           service=service,
-          id=self.event.data.object['id'],
+          id=self.event.data.object["id"],
         ) or cast(stripe.StripeObject, self.event.data.object)
       else:
         # Fallback on event data if no service exists for this object type
@@ -73,7 +72,7 @@ class StripeWebhooks(View):
 
     finally:
       # Allow authors to hook in
-      author_hook = self.event.type.replace('.', '_')
+      author_hook = self.event.type.replace(".", "_")
       if hasattr(self, author_hook):
         response = getattr(self, author_hook)() or response
 

@@ -1,15 +1,15 @@
-from typing import TYPE_CHECKING, TypeVar, TypeGuard, Any, Literal
 import threading
+from typing import TYPE_CHECKING, Any, Literal, TypeGuard, TypeVar
 
 import stripe
-
 from django.conf import settings
 from django.db import models, transaction
 
-
 if TYPE_CHECKING:
   from django_stripe_hooks.models import (
-    Customer, FundingInstructions, StripeModel,
+    Customer,
+    FundingInstructions,
+    StripeModel,
   )
 
 
@@ -26,57 +26,56 @@ class allow_stripe_write:
   bypass save()/delete() entirely and are not guarded by this mechanism.
   """
 
-  def __enter__(self) -> 'allow_stripe_write':
-    _write_depth.count = getattr(_write_depth, 'count', 0) + 1
+  def __enter__(self) -> "allow_stripe_write":
+    _write_depth.count = getattr(_write_depth, "count", 0) + 1
     return self
 
   def __exit__(self, *args: Any) -> None:
-    _write_depth.count = max(0, getattr(_write_depth, 'count', 0) - 1)
+    _write_depth.count = max(0, getattr(_write_depth, "count", 0) - 1)
 
 
-T = TypeVar('T', bound='StripeModel[stripe.StripeObject]')
+T = TypeVar("T", bound="StripeModel[stripe.StripeObject]")
 PreSave = dict[
-  models.ForeignKey[Any, Any] | models.OneToOneField[Any, Any],
-  stripe.StripeObject
+  models.ForeignKey[Any, Any] | models.OneToOneField[Any, Any], stripe.StripeObject
 ]
 PostSave = dict[
   models.ManyToOneRel | models.ManyToManyField[Any, Any],
-  list[str | stripe.StripeObject]
+  list[str | stripe.StripeObject],
 ]
 BankTransferType = Literal[
-  'eu_bank_transfer',
-  'gb_bank_transfer',
-  'jp_bank_transfer',
-  'mx_bank_transfer',
-  'us_bank_transfer',
+  "eu_bank_transfer",
+  "gb_bank_transfer",
+  "jp_bank_transfer",
+  "mx_bank_transfer",
+  "us_bank_transfer",
 ]
 
 
 def is_stripe_model(
   val: Any,
-) -> TypeGuard['type[StripeModel[stripe.StripeObject]]']:
-   return (
-     isinstance(val, type)
-     and issubclass(val, models.Model)
-     and hasattr(val, 'deserialize')
-   )
+) -> TypeGuard["type[StripeModel[stripe.StripeObject]]"]:
+  return (
+    isinstance(val, type)
+    and issubclass(val, models.Model)
+    and hasattr(val, "deserialize")
+  )
 
 
-class FundingInstructionsManager(models.Manager['FundingInstructions']):
+class FundingInstructionsManager(models.Manager["FundingInstructions"]):
   def from_stripe(
     self,
-    customer: 'Customer',
+    customer: "Customer",
     bank_transfer_type: BankTransferType,
     currency: str,
-  ) -> 'FundingInstructions':
+  ) -> "FundingInstructions":
     """Retrieves details from Stripe API and updates or creates object."""
     stripe_client = stripe.StripeClient(settings.STRIPE_SECRET_KEY)
     stripe_obj = stripe_client.v1.customers.funding_instructions.create(
       customer.id,
       params={
-        'funding_type': 'bank_transfer',
-        'bank_transfer': {'type': bank_transfer_type},
-        'currency': currency,
+        "funding_type": "bank_transfer",
+        "bank_transfer": {"type": bank_transfer_type},
+        "currency": currency,
       },
     )
     data = self.model.deserialize(stripe_obj)
@@ -113,7 +112,7 @@ class StripeManager(models.Manager[T]):
 
     for field in self.model._meta.get_fields():
       if isinstance(field, (models.ForeignKey, models.OneToOneField)):
-        if field.name in data and isinstance(data[field.name], stripe.StripeObject):  # noqa: E501
+        if field.name in data and isinstance(data[field.name], stripe.StripeObject):
           pre_save[field] = data.pop(field.name)
       elif isinstance(field, (models.ManyToOneRel, models.ManyToManyField)):
         if field.name in data:
@@ -122,12 +121,12 @@ class StripeManager(models.Manager[T]):
     # Resolve pre-save FKs outside the parent's transaction
     for field, related_stripe_obj in pre_save.items():
       assert is_stripe_model(field.related_model)
-      related_obj = field.related_model.objects.from_stripe(related_stripe_obj)  # noqa: E501
+      related_obj = field.related_model.objects.from_stripe(related_stripe_obj)
       data[field.attname] = related_obj.id
 
     with allow_stripe_write(), transaction.atomic():
       django_obj, created = self.update_or_create(
-        id=data.pop('id'),
+        id=data.pop("id"),
         defaults=data,
       )
 
@@ -144,9 +143,9 @@ class StripeManager(models.Manager[T]):
               # object's own webhook will set the FK back to this object.
               continue
             related_stripe_obj = id_or_related_stripe_obj
-            if getattr(related_stripe_obj, field.field.name) != stripe_obj['id']:  # noqa: E501
-              setattr(related_stripe_obj, field.field.name, stripe_obj['id'])
-            related_obj = field.related_model.objects.from_stripe(related_stripe_obj)  # noqa: E501
+            if getattr(related_stripe_obj, field.field.name) != stripe_obj["id"]:
+              setattr(related_stripe_obj, field.field.name, stripe_obj["id"])
+            related_obj = field.related_model.objects.from_stripe(related_stripe_obj)
           django_obj.refresh_from_db()
 
     return django_obj

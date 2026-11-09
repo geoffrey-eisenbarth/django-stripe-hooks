@@ -2,50 +2,50 @@ import os
 import re
 import subprocess
 import time
-from typing import Generator
+from collections.abc import Generator
 
 import pytest
-
 from django.conf import settings
 
+WEBHOOK_URL = "localhost:8000/stripe/webhooks/"
+STRIPE_LOG = "tests/stripe_cli.log"
+STRIPE_VERSION = "2026-02-25.clover"  # c.f. Python SDK >= 14.4 < 15.0
 
-WEBHOOK_URL = 'localhost:8000/stripe/webhooks/'
-STRIPE_LOG = 'tests/stripe_cli.log'
-STRIPE_VERSION = '2026-02-25.clover'  # c.f. Python SDK >= 14.4 < 15.0
 
-
-@pytest.fixture(scope='session', autouse=True)
+@pytest.fixture(scope="session", autouse=True)
 def check_stripe_installed() -> None:
   try:
-    subprocess.run(['stripe', '--version'], capture_output=True, check=True)
+    subprocess.run(["stripe", "--version"], capture_output=True, check=True)
   except (subprocess.CalledProcessError, FileNotFoundError):
-    pytest.exit('Stripe CLI is not installed.')
+    pytest.exit("Stripe CLI is not installed.")
 
 
-@pytest.fixture(scope='session', autouse=True)
+@pytest.fixture(scope="session", autouse=True)
 def stripe_cli_setup() -> Generator[None, None, None]:
   """
   Starts the Stripe CLI, captures the dynamic signing secret,
   and updates Django settings for the duration of the test session.
   """
 
-  log_file = open(STRIPE_LOG, 'w')
+  log_file = open(STRIPE_LOG, "w")
 
   # Get Stripe keys from env and inject to process environment
-  stripe_key = getattr(settings, 'STRIPE_SECRET_KEY', None)
+  stripe_key = getattr(settings, "STRIPE_SECRET_KEY", None)
   env = os.environ.copy()
   if stripe_key:
-    env['STRIPE_API_KEY'] = stripe_key
+    env["STRIPE_API_KEY"] = stripe_key
   else:
-    pytest.exit(
-      "STRIPE_SECRET_KEY not found in settings. Check your .env file."
-    )
+    pytest.exit("STRIPE_SECRET_KEY not found in settings. Check your .env file.")
 
   # Start the Stripe CLI listener in the background
-  process = subprocess.Popen([
-      'stripe', 'listen',
-      '--forward-to', WEBHOOK_URL,
-      '--log-level', 'debug',
+  process = subprocess.Popen(
+    [
+      "stripe",
+      "listen",
+      "--forward-to",
+      WEBHOOK_URL,
+      "--log-level",
+      "debug",
     ],
     stdout=log_file,
     stderr=subprocess.STDOUT,
@@ -60,10 +60,10 @@ def stripe_cli_setup() -> Generator[None, None, None]:
   # Wait up to 10 seconds for the secret to appear in the logs
   while time.time() - start_time < 10:
     log_file.flush()  # Force write to disk so we can read it
-    with open(STRIPE_LOG, 'r') as f:
+    with open(STRIPE_LOG) as f:
       content = f.read()
-      if 'whsec_' in content:
-        match = re.search(r'whsec_[a-zA-Z0-9]+', content)
+      if "whsec_" in content:
+        match = re.search(r"whsec_[a-zA-Z0-9]+", content)
         if match:
           wh_secret = match.group(0)
           break
@@ -73,9 +73,7 @@ def stripe_cli_setup() -> Generator[None, None, None]:
     process.terminate()
     log_file.close()
     pytest.exit(
-      'Failed to capture secret. '
-      f'CLI Exit Code: {process.poll()}. '
-      f'Check {STRIPE_LOG}'
+      f"Failed to capture secret. CLI Exit Code: {process.poll()}. Check {STRIPE_LOG}"
     )
 
   # Inject the secret into Django settings

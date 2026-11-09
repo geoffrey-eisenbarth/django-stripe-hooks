@@ -1,12 +1,12 @@
-from decimal import Decimal
 import time
 import uuid
-from typing import TypeVar, Any, Generator
+from collections.abc import Generator
+from decimal import Decimal
+from typing import Any, TypeVar
 from unittest.mock import MagicMock, patch
 
-import stripe
 import pytest
-
+import stripe
 from django.apps import apps
 from django.conf import settings
 from django.core.handlers.wsgi import WSGIHandler
@@ -14,19 +14,18 @@ from django.core.signals import got_request_exception
 from django.db import models as models
 from django.http import HttpRequest
 from django.test import RequestFactory
+from pytest_django.live_server_helper import LiveServer
 
 from django_stripe_hooks import models as stripe_models
 from django_stripe_hooks.managers import is_stripe_model
 from django_stripe_hooks.models import Customer
 from django_stripe_hooks.views import StripeWebhooks
-from pytest_django.live_server_helper import LiveServer
 
-T = TypeVar('T', bound='stripe_models.StripeModel[Any]')
+T = TypeVar("T", bound="stripe_models.StripeModel[Any]")
 
 
 @pytest.mark.django_db(transaction=True)
 class TestWebhooks:
-
   @pytest.fixture(autouse=True)
   def setup_stripe(self) -> None:
     self.stripe_client = stripe.StripeClient(settings.STRIPE_SECRET_KEY)
@@ -41,9 +40,9 @@ class TestWebhooks:
       **kwargs: Any,
     ) -> None:
       # Capture the actual exception object for the error message.
-      exc = kwargs.get('exception')
+      exc = kwargs.get("exception")
       if exc is None:
-        exc_info = kwargs.get('exc_info')
+        exc_info = kwargs.get("exc_info")
         if exc_info:
           exc = exc_info[1]  # (type, value, traceback) → value
       if exc is not None:
@@ -59,9 +58,7 @@ class TestWebhooks:
 
     if exceptions:
       # Fail the test with the details of the first exception found
-      pytest.fail(
-        f'Server-side exception during webhook processing: {exceptions[0]}'
-      )
+      pytest.fail(f"Server-side exception during webhook processing: {exceptions[0]}")
 
   def wait_for_object(
     self,
@@ -77,7 +74,7 @@ class TestWebhooks:
       time.sleep(0.5)
       retries -= 1
     pytest.fail(
-      f'Timed out waiting for create on {model_class.__name__} with {kwargs=}'
+      f"Timed out waiting for create on {model_class.__name__} with {kwargs=}"
     )
 
   def assert_fk_integrity(self) -> None:
@@ -88,7 +85,7 @@ class TestWebhooks:
     in the DB resolve to an existing object by the end of the test.
     """
     broken = []
-    for cls in apps.get_app_config('django_stripe_hooks').get_models():
+    for cls in apps.get_app_config("django_stripe_hooks").get_models():
       if not is_stripe_model(cls):
         continue
       for obj in cls.objects.all():
@@ -119,50 +116,58 @@ class TestWebhooks:
     """
 
     # Product primatives
-    s_product = self.stripe_client.v1.products.create(params={
-      'name': f'Test Product {uuid.uuid4().hex[:8]}',
-      'description': 'Description for test product',
-      'statement_descriptor': 'STATEMENT',
-      'metadata': {'category': 'Test Product'},
-    })
+    s_product = self.stripe_client.v1.products.create(
+      params={
+        "name": f"Test Product {uuid.uuid4().hex[:8]}",
+        "description": "Description for test product",
+        "statement_descriptor": "STATEMENT",
+        "metadata": {"category": "Test Product"},
+      }
+    )
     d_product = self.wait_for_object(
       stripe_models.Product,
       id=s_product.id,
     )
 
-    s_price = self.stripe_client.v1.prices.create(params={
-      'product': s_product.id,
-      'nickname': 'Test Nickname',
-      'unit_amount': 2000,
-      'currency': 'usd',
-      'recurring': {'interval': 'year'},
-      'metadata': {'category': 'Test Price'},
-    })
+    s_price = self.stripe_client.v1.prices.create(
+      params={
+        "product": s_product.id,
+        "nickname": "Test Nickname",
+        "unit_amount": 2000,
+        "currency": "usd",
+        "recurring": {"interval": "year"},
+        "metadata": {"category": "Test Price"},
+      }
+    )
     d_price = self.wait_for_object(
       stripe_models.Price,
       id=s_price.id,
       product=d_product,
     )
 
-    s_coupon = self.stripe_client.v1.coupons.create(params={
-      'name': f'Test Coupon {uuid.uuid4().hex[:8]}',
-      'percent_off': 20,
-      'duration': 'once',
-      'applies_to': {'products': [s_product.id]},
-    })
+    s_coupon = self.stripe_client.v1.coupons.create(
+      params={
+        "name": f"Test Coupon {uuid.uuid4().hex[:8]}",
+        "percent_off": 20,
+        "duration": "once",
+        "applies_to": {"products": [s_product.id]},
+      }
+    )
     d_coupon = self.wait_for_object(
       stripe_models.Coupon,
       id=s_coupon.id,
       products=d_product,
     )
 
-    s_promo = self.stripe_client.v1.promotion_codes.create(params={
-      'promotion': {
-        'type': 'coupon',
-        'coupon': s_coupon.id,
-      },
-      'code': f'PROMO_{uuid.uuid4().hex[:8].upper()}'
-    })
+    s_promo = self.stripe_client.v1.promotion_codes.create(
+      params={
+        "promotion": {
+          "type": "coupon",
+          "coupon": s_coupon.id,
+        },
+        "code": f"PROMO_{uuid.uuid4().hex[:8].upper()}",
+      }
+    )
     self.wait_for_object(
       stripe_models.PromotionCode,
       id=s_promo.id,
@@ -170,22 +175,23 @@ class TestWebhooks:
     )
 
     # Billing primatives
-    s_customer = self.stripe_client.v1.customers.create(params={
-      'name': 'Test Customer',
-      'email': 'test@customer.com',
-    })
-    d_customer = self.wait_for_object(
-      stripe_models.Customer,
-      id=s_customer.id
+    s_customer = self.stripe_client.v1.customers.create(
+      params={
+        "name": "Test Customer",
+        "email": "test@customer.com",
+      }
     )
+    d_customer = self.wait_for_object(stripe_models.Customer, id=s_customer.id)
 
-    s_payment_method = self.stripe_client.v1.payment_methods.create(params={
-      'type': 'card',
-      'card': {'token': 'tok_visa'},
-    })
+    s_payment_method = self.stripe_client.v1.payment_methods.create(
+      params={
+        "type": "card",
+        "card": {"token": "tok_visa"},
+      }
+    )
     self.stripe_client.v1.payment_methods.attach(
       s_payment_method.id,
-      params={'customer': s_customer.id},
+      params={"customer": s_customer.id},
     )
     d_payment_method = self.wait_for_object(
       stripe_models.PaymentMethod,
@@ -193,14 +199,16 @@ class TestWebhooks:
       customer=d_customer,
     )
 
-    s_subscription = self.stripe_client.v1.subscriptions.create(params={
-      'customer': s_customer.id,
-      'items': [{'price': s_price.id, 'quantity': 1}],
-      'discounts': [{'promotion_code': s_promo.id}],
-      'default_payment_method': s_payment_method.id,
-      'collection_method': 'charge_automatically',
-      'payment_behavior': 'default_incomplete',
-    })
+    s_subscription = self.stripe_client.v1.subscriptions.create(
+      params={
+        "customer": s_customer.id,
+        "items": [{"price": s_price.id, "quantity": 1}],
+        "discounts": [{"promotion_code": s_promo.id}],
+        "default_payment_method": s_payment_method.id,
+        "collection_method": "charge_automatically",
+        "payment_behavior": "default_incomplete",
+      }
+    )
 
     d_payment_intent = self.wait_for_object(
       stripe_models.PaymentIntent,
@@ -215,13 +223,13 @@ class TestWebhooks:
     d_subscription = self.wait_for_object(
       stripe_models.Subscription,
       id=s_subscription.id,
-      status='active',
+      status="active",
       customer=d_customer,
       default_payment_method=d_payment_method,
     )
     self.wait_for_object(
       stripe_models.Invoice,
-      status='paid',
+      status="paid",
       customer=d_customer,
       subscription=d_subscription,
     )
@@ -232,11 +240,13 @@ class TestWebhooks:
       customer=d_customer,
       payment_intent_id=s_payment_intent.id,
     )
-    s_refund = self.stripe_client.v1.refunds.create(params={
-      'amount': s_payment_intent.amount,
-      'payment_intent': s_payment_intent.id,
-      'reason': 'requested_by_customer',
-    })
+    s_refund = self.stripe_client.v1.refunds.create(
+      params={
+        "amount": s_payment_intent.amount,
+        "payment_intent": s_payment_intent.id,
+        "reason": "requested_by_customer",
+      }
+    )
     d_balance_txn = self.wait_for_object(
       stripe_models.BalanceTransaction,
       refunds=s_refund.id,
@@ -258,12 +268,14 @@ class TestWebhooks:
     assert d_price.unit_amount == Decimal(20.00)
 
     # Test deletion webhooks and soft deletes
-    s_product = self.stripe_client.v1.products.create(params={
-      'name': f'Delete Product {uuid.uuid4().hex[:8]}',
-      'description': 'Description for deleted product',
-      'statement_descriptor': 'STATEMENT',
-      'metadata': {'category': 'Test Product'},
-    })
+    s_product = self.stripe_client.v1.products.create(
+      params={
+        "name": f"Delete Product {uuid.uuid4().hex[:8]}",
+        "description": "Description for deleted product",
+        "statement_descriptor": "STATEMENT",
+        "metadata": {"category": "Test Product"},
+      }
+    )
     d_product = self.wait_for_object(
       stripe_models.Product,
       id=s_product.id,
@@ -292,7 +304,7 @@ class TestWebhooks:
     self.wait_for_object(
       stripe_models.Subscription,
       id=s_subscription.id,
-      status='canceled',
+      status="canceled",
     )
 
     # Wait for any delayed webhooks to arrive, then verify FK integrity.
@@ -319,23 +331,26 @@ class TestAuthorHooks:
       def customer_created(self) -> None:
         called.append(True)
 
-    fake_event = stripe.Event.construct_from({
-      'id': 'evt_test',
-      'type': 'customer.created',
-      'data': {'object': {'id': 'cus_test', 'object': 'customer'}},
-    }, 'key')
+    fake_event = stripe.Event.construct_from(
+      {
+        "id": "evt_test",
+        "type": "customer.created",
+        "data": {"object": {"id": "cus_test", "object": "customer"}},
+      },
+      "key",
+    )
 
     factory = RequestFactory()
     request = factory.post(
-      '/stripe/webhooks/',
-      data=b'{}',
-      content_type='application/json',
+      "/stripe/webhooks/",
+      data=b"{}",
+      content_type="application/json",
     )
-    request.META['HTTP_STRIPE_SIGNATURE'] = 'test'
+    request.META["HTTP_STRIPE_SIGNATURE"] = "test"
 
     with (
-      patch.object(StripeWebhooks, 'stripe_client') as mock_client,
-      patch.object(Customer.objects, 'from_stripe', return_value=MagicMock()),
+      patch.object(StripeWebhooks, "stripe_client") as mock_client,
+      patch.object(Customer.objects, "from_stripe", return_value=MagicMock()),
     ):
       mock_client.construct_event.return_value = fake_event
       response = MyHooks.as_view()(request)
@@ -345,23 +360,26 @@ class TestAuthorHooks:
 
   def test_no_hook_still_succeeds(self) -> None:
     """When no matching method exists, the response is still 200."""
-    fake_event = stripe.Event.construct_from({
-      'id': 'evt_test',
-      'type': 'customer.created',
-      'data': {'object': {'id': 'cus_test', 'object': 'customer'}},
-    }, 'key')
+    fake_event = stripe.Event.construct_from(
+      {
+        "id": "evt_test",
+        "type": "customer.created",
+        "data": {"object": {"id": "cus_test", "object": "customer"}},
+      },
+      "key",
+    )
 
     factory = RequestFactory()
     request = factory.post(
-      '/stripe/webhooks/',
-      data=b'{}',
-      content_type='application/json',
+      "/stripe/webhooks/",
+      data=b"{}",
+      content_type="application/json",
     )
-    request.META['HTTP_STRIPE_SIGNATURE'] = 'test'
+    request.META["HTTP_STRIPE_SIGNATURE"] = "test"
 
     with (
-      patch.object(StripeWebhooks, 'stripe_client') as mock_client,
-      patch.object(Customer.objects, 'from_stripe', return_value=MagicMock()),
+      patch.object(StripeWebhooks, "stripe_client") as mock_client,
+      patch.object(Customer.objects, "from_stripe", return_value=MagicMock()),
     ):
       mock_client.construct_event.return_value = fake_event
       response = StripeWebhooks.as_view()(request)

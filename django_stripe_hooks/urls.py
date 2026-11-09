@@ -2,11 +2,10 @@ from django.urls import path
 
 from django_stripe_hooks.views import StripeWebhooks
 
-
 urlpatterns = [
   path(
-    'webhooks/',
+    "webhooks/",
     StripeWebhooks.as_view(),
-    name='stripe_webhooks',
+    name="stripe_webhooks",
   ),
 ]

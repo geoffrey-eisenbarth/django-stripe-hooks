@@ -10,10 +10,11 @@ __pycache__/
 *.sqlite-shm
 *.db-wal
 *.db-shm
-poetry.lock
+uv.lock
 stripe_cli.log
 .coverage
 coverage.xml
 test*.html
 htmlcov/
 tests/**/local_settings.py
+.ruff_cache

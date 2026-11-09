@@ -13,8 +13,7 @@ class StripeService(Protocol):
     id: str,
     params: dict[str, Any] | None = None,
     options: dict[str, Any] | None = None,
-  ) -> stripe.StripeObject:
-    ...
+  ) -> stripe.StripeObject: ...
 
 
 def fetch(service: StripeService, id: str) -> stripe.StripeObject | None:
@@ -32,19 +31,22 @@ def fetch(service: StripeService, id: str) -> stripe.StripeObject | None:
   ```
 
   """
-  model_name = service.__class__.__name__.replace('Service', '')
+  model_name = service.__class__.__name__.replace("Service", "")
   StripeModel = getattr(stripe_models, model_name)
 
   for attempt in range(5):
     try:
-      stripe_obj = service.retrieve(id, params={
-        'expand': StripeModel.API_EXPAND_FIELDS,
-      })
+      stripe_obj = service.retrieve(
+        id,
+        params={
+          "expand": StripeModel.API_EXPAND_FIELDS,
+        },
+      )
     except stripe.error.RateLimitError:
       time.sleep(0.5 * (attempt + 1))
     except stripe.error.InvalidRequestError as e:
       is_404 = getattr(e, "http_status", None) == 404
-      is_missing = getattr(e, "code", None) == 'resource_missing'
+      is_missing = getattr(e, "code", None) == "resource_missing"
       if is_404 or is_missing:
         # Stripe object soft deleted, return None
         return None

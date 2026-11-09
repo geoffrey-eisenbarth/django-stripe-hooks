@@ -58,7 +58,7 @@ pip install django-stripe-hooks
 ```python
 INSTALLED_APPS = [
   # ...
-  'django_stripe_hooks',
+  "django_stripe_hooks",
 ]
 ```
 
@@ -82,7 +82,7 @@ In your project's `urls.py`:
 from django.urls import path, include
 
 urlpatterns = [
-  path('stripe/', include('django_stripe_hooks.urls')),
+  path("stripe/", include("django_stripe_hooks.urls")),
   # ...
 ]
 ```
@@ -107,8 +107,8 @@ This interactive command will allow you to create, update, and manage your Strip
 After creation, the command prints two values to add to your `settings.py`:
 
 ```python
-STRIPE_WEBHOOK_ENDPOINT_ID = "we_..."    # used to update the endpoint later
-STRIPE_WEBHOOK_SECRET_KEY  = "whsec_..." # used to verify incoming signatures
+STRIPE_WEBHOOK_ENDPOINT_ID = "we_..."  # used to update the endpoint later
+STRIPE_WEBHOOK_SECRET_KEY = "whsec_..."  # used to verify incoming signatures
 ```
 
 > **Important:** `STRIPE_WEBHOOK_SECRET_KEY` is only returned once by Stripe. Copy it immediately.
@@ -139,8 +139,8 @@ To react to specific webhook events (e.g. sending a welcome email when a subscri
 ```python
 from django_stripe_hooks.views import StripeWebhooks
 
-class MyStripeWebhooks(StripeWebhooks):
 
+class MyStripeWebhooks(StripeWebhooks):
   def customer_subscription_created(self) -> None:
     subscription = self.django_obj
     send_mail(
@@ -174,7 +174,7 @@ from django.urls import path
 from myapp.views import MyStripeWebhooks
 
 urlpatterns = [
-  path('payments/webhooks/', MyStripeWebhooks.as_view(), name='stripe_webhooks'),
+  path("payments/webhooks/", MyStripeWebhooks.as_view(), name="stripe_webhooks"),
 ]
 ```
 

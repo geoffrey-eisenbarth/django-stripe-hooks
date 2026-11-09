@@ -10,7 +10,7 @@ from django_stripe_hooks.money import Money
 class MoneyDescriptor:
   """Descriptor that wraps a raw Decimal DB value in a Money instance."""
 
-  def __init__(self, field: 'MoneyField') -> None:
+  def __init__(self, field: "MoneyField") -> None:
     self.field = field
 
   def __get__(self, obj: Any, objtype: type | None = None) -> Money | None:
@@ -19,11 +19,11 @@ class MoneyDescriptor:
     value = obj.__dict__.get(self.field.attname)
     if value is None:
       return None
-    currency_getter = attrgetter(self.field.currency_field.replace('__', '.'))
+    currency_getter = attrgetter(self.field.currency_field.replace("__", "."))
     try:
-      currency: str = currency_getter(obj) or ''
+      currency: str = currency_getter(obj) or ""
     except AttributeError:
-      currency = ''
+      currency = ""
     return Money(value, currency, self.field.is_balance)
 
   def __set__(self, obj: Any, value: Any) -> None:
@@ -48,7 +48,7 @@ class MoneyField(models.DecimalField):  # type: ignore[type-arg]
   def __init__(
     self,
     *args: Any,
-    currency_field: str = 'currency',
+    currency_field: str = "currency",
     is_balance: bool = False,
     **kwargs: Any,
   ) -> None:
@@ -67,8 +67,8 @@ class MoneyField(models.DecimalField):  # type: ignore[type-arg]
 
   def deconstruct(self) -> tuple[str, str, list[Any], dict[str, Any]]:
     name, path, args, kwargs = super().deconstruct()
-    if self.currency_field != 'currency':
-      kwargs['currency_field'] = self.currency_field
+    if self.currency_field != "currency":
+      kwargs["currency_field"] = self.currency_field
     if self.is_balance:
-      kwargs['is_balance'] = self.is_balance
+      kwargs["is_balance"] = self.is_balance
     return name, path, list(args), kwargs

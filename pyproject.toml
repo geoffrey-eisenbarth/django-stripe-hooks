@@ -1,60 +1,94 @@
 [project]
-name = 'django-stripe-hooks'
-version = '0.2.0.dev2'
-description = 'Webhooks for syncing Stripe payment data to your Django database.'
+name = "django-stripe-hooks"
+version = "0.2.0.dev2"
+description = "Webhooks for syncing Stripe payment data to your Django database."
 authors = [
-    {name = 'Geoffrey Eisenbarth',email = 'geoffrey.eisenbarth@gmail.com'}
+    {name = "Geoffrey Eisenbarth", email = "geoffrey.eisenbarth@gmail.com"}
 ]
-license = {text = 'MIT'}
-readme = 'README.md'
-requires-python = '>=3.12,<4'
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.12,<4"
 dependencies = [
-    'django (>=6.0)',
-    'stripe (>=14.4.1,<15.0.0)',
+    "django (>=6.0)",
+    "stripe (>=14.4.1,<15.0.0)",
 ]
-
-[tool.poetry]
-
-[tool.poetry.group.dev.dependencies]
-mypy = '^1.19.1'
-flake8 = '^7.3.0'
-django-stubs = '^6.0.1'
-codecov = '^2.1.13'
-pre-commit = '^4.5.1'
-coverage = '^7.13.5'
-pytest = '^9.0.2'
-pytest-django = '^4.12.0'
-django-stubs-ext = '^6.0.1'
-ipython = '^9.11.0'
-django-environ = '^0.13.0'
-ipdb = '^0.13.13'
-pytest-cov = '^7.1.0'
-pytest-rerunfailures = "^16.1"
 
 [build-system]
-requires = ['poetry-core>=2.0.0,<3.0.0']
-build-backend = 'poetry.core.masonry.api'
+requires = ["uv_build>=0.12.12,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-root = ""
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19.1",
+    "django-stubs[compatible-mypy]>=6.0.1",
+    "codecov>=2.1.13",
+    "pre-commit>=4.5.1",
+    "coverage>=7.13.5",
+    "pytest>=9.0.2",
+    "pytest-django>=4.12.0",
+    "django-stubs-ext>=6.0.1",
+    "ipython>=9.11.0",
+    "django-environ>=0.13.0",
+    "ipdb>=0.13.13",
+    "pytest-cov>=7.1.0",
+    "pytest-rerunfailures>=16.1",
+    "ruff>=0.16.7",
+]
+
+[tool.ruff]
+line-length = 88
+indent-width = 2
+target-version = "py312"
+exclude = [
+  "*/migrations/*",
+  "manage.py",
+  "settings.py",
+  "local_settings.py",
+  "vendor.py",
+]
+
+[tool.ruff.lint]
+select = [
+  "E",        # pycodestyle errors
+  "W",        # pycodestyle warnings
+  "F",        # pyflakes (unused imports, undefined names, etc.)
+  "I",        # isort (automatically sorts and organizes imports)
+  "UP",       # pyupgrade (modernizes Python syntax)
+  "RUF100",   # flags unused noqa comments
+]
+ignore = [
+  "E111",  # Indentation is not a multiple of four
+  "E114",  # Comment indentation is not a multiple of four
+  "E731",  # Do not assign a lambda expression, use a def
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
 
 [tool.pytest.ini_options]
-DJANGO_SETTINGS_MODULE = 'project.settings'
-pythonpath = ['.', 'tests/project']
-addopts = '--liveserver=localhost:8000'
-testpaths = ['tests']
+DJANGO_SETTINGS_MODULE = "project.settings"
+pythonpath = [".", "tests/project"]
+addopts = "--liveserver=localhost:8000"
+testpaths = ["tests"]
 
 [tool.coverage.report]
 show_missing = true
 
 [tool.mypy]
-python_version = '3.12'
-plugins = ['mypy_django_plugin.main']
+python_version = "3.12"
+plugins = ["mypy_django_plugin.main"]
 strict = true
 ignore_missing_imports = true
-packages = ['django_stripe_hooks', 'tests']
+packages = ["django_stripe_hooks", "tests"]
 exclude = [
-  'django_stripe_hooks/migrations',
-  'tests/project/manage.py',
-  'tests/project/project'
+  "django_stripe_hooks/migrations",
+  "tests/project/manage.py",
+  "tests/project/project",
 ]
 
 [tool.django-stubs]
-django_settings_module = 'tests.project.project.settings'
+django_settings_module = "tests.project.project.settings"

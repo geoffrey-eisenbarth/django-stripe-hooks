@@ -11,14 +11,13 @@ from django.utils.safestring import mark_safe
 
 from .fields import MoneyField
 
-
 MODULES_TO_PATCH = [admin_utils, admin_helpers, admin_list]
 
 
 def address_format(address: dict[str, Any]) -> str:
-  city = address.get('city')
-  state = address.get('state')
-  postal_code = address.get('postal_code')
+  city = address.get("city")
+  state = address.get("state")
+  postal_code = address.get("postal_code")
   if city and state and postal_code:
     line3 = f"{city}, {state} {postal_code}"
   elif city and state:
@@ -27,18 +26,23 @@ def address_format(address: dict[str, Any]) -> str:
     line3 = postal_code
   else:
     line3 = None
-  lines = '<br>'.join(filter(None, [
-    address.get('line1'),
-    address.get('line2'),
-    line3,
-    address.get('country'),
-  ]))
+  lines = "<br>".join(
+    filter(
+      None,
+      [
+        address.get("line1"),
+        address.get("line2"),
+        line3,
+        address.get("country"),
+      ],
+    )
+  )
   if lines:
     return format_html(
       '<address style="font-size: 0.8em;">{lines}</address>',
       lines=mark_safe(lines),
     )
-  return mark_safe('-')
+  return mark_safe("-")
 
 
 def json_format(value: Any) -> str:
@@ -48,7 +52,7 @@ def json_format(value: Any) -> str:
       json=json.dumps(value, indent=2, default=str),
     )
   if isinstance(value, list):
-    return mark_safe(', '.join(str(v) for v in value))
+    return mark_safe(", ".join(str(v) for v in value))
   return mark_safe(str(value))
 
 
@@ -66,13 +70,13 @@ def patch() -> None:
     if isinstance(field, MoneyField):
       return str(value)
     if value and isinstance(field, models.DateTimeField):
-      return date_format(value, 'SHORT_DATETIME_FORMAT')
-    if field.name.endswith('address') and isinstance(value, dict):
+      return date_format(value, "SHORT_DATETIME_FORMAT")
+    if field.name.endswith("address") and isinstance(value, dict):
       return address_format(value)
     if value and isinstance(field, models.JSONField):
       return json_format(value)
     if value and isinstance(field, models.DateField):
-      return date_format(value, 'SHORT_DATE_FORMAT')
+      return date_format(value, "SHORT_DATE_FORMAT")
     return original_display_for_field(value, field, *args, **kwargs)
 
   for mod in MODULES_TO_PATCH:
