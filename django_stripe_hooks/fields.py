@@ -4,6 +4,7 @@ from typing import Any
 
 from django.db import models
 
+from django_stripe_hooks.forms import MoneyFormField
 from django_stripe_hooks.money import Money
 
 
@@ -72,3 +73,7 @@ class MoneyField(models.DecimalField):  # type: ignore[type-arg]
     if self.is_balance:
       kwargs["is_balance"] = self.is_balance
     return name, path, list(args), kwargs
+
+  def formfield(self, **kwargs: Any) -> Any:
+    kwargs.setdefault("form_class", MoneyFormField)
+    return super().formfield(**kwargs)
