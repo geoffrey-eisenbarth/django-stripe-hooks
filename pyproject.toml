@@ -33,7 +33,6 @@ dev = [
     "ipython>=9.11.0",
     "django-environ>=0.13.0",
     "ipdb>=0.13.13",
-    "pytest-cov>=7.1.0",
     "pytest-rerunfailures>=16.1",
     "ruff>=0.16.7",
 ]
@@ -58,6 +57,7 @@ select = [
   "I",        # isort (automatically sorts and organizes imports)
   "UP",       # pyupgrade (modernizes Python syntax)
   "RUF100",   # flags unused noqa comments
+  "DJ",       # flake8-django
 ]
 ignore = [
   "E111",  # Indentation is not a multiple of four
@@ -74,6 +74,10 @@ DJANGO_SETTINGS_MODULE = "project.settings"
 pythonpath = [".", "tests/project"]
 addopts = "--liveserver=localhost:8000"
 testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["django_stripe_hooks"]
 
 [tool.coverage.report]
 show_missing = true

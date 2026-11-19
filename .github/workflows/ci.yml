@@ -27,18 +27,24 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install poetry
-          poetry run pip install "Django${{ matrix.django-version }}"
-          poetry install --with dev
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          python-version: ${{ matrix.python-version }}
 
-      - name: Lint with flake8
-        run: poetry run flake8
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Install Django ${{ matrix.django-version }}
+        run: uv run pip install "Django${{ matrix.django-version }}"
+
+      - name: Lint with ruff
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
 
       - name: Check types with mypy
-        run: poetry run mypy
+        run: uv run mypy
 
       - name: Run tests
         env:
@@ -48,7 +54,8 @@ jobs:
           # The Stripe CLI specifically looks for this name:
           STRIPE_API_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
         run: |
-          poetry run pytest --cov --cov-branch --cov-report=xml
+          uv run coverage run -m pytest -q
+          uv run coverage xml
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
