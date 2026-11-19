@@ -200,7 +200,7 @@ A few consequences to be aware of:
   In practice, most webhooks arrive within a few seconds, but network conditions and Stripe processing can delay delivery by minutes.
   Do not rely on webhooks for time-critical operations where you need an immediate response.
 
-- **Not all objects generate webhooks.** 
+- **Not all objects generate webhooks.**
   `SubscriptionItem`, `InvoiceLineItem`, `InvoicePayment`, and `BalanceTransaction` do not have their own Stripe webhook events.   They are populated as nested objects within parent webhook payloads (e.g. a `customer.subscription.updated` event includes subscription items).
 
 ---
