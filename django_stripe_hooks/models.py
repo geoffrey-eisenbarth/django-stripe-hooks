@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import datetime as dt
 from decimal import Decimal
 from typing import Any, TypeVar
@@ -43,6 +45,28 @@ class StripeModel[T: stripe.StripeObject](models.Model):
 
   class Meta:
     abstract = True
+
+  def __str__(self) -> str:
+    return self.id
+
+  def save(self, *args: Any, **kwargs: Any) -> None:
+    if getattr(_write_depth, "count", 0) == 0:
+      raise TypeError(
+        f"{self.__class__.__name__} is managed by Stripe. "
+        "Create and update objects via the Stripe SDK; "
+        "the local model is updated automatically when the webhook arrives. "
+        f"To sync immediately, call {self.__class__.__name__}.objects.from_stripe()."
+      )
+    super().save(*args, **kwargs)
+
+  def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
+    if getattr(_write_depth, "count", 0) == 0:
+      raise TypeError(
+        f"{self.__class__.__name__} is managed by Stripe. "
+        "Delete objects via the Stripe SDK; the local model "
+        "is soft-deleted automatically when the webhook arrives."
+      )
+    return super().delete(*args, **kwargs)
 
   @classmethod
   def clean_stripe(
@@ -125,28 +149,6 @@ class StripeModel[T: stripe.StripeObject](models.Model):
 
     return data
 
-  def __str__(self) -> str:
-    return self.id
-
-  def save(self, *args: Any, **kwargs: Any) -> None:
-    if getattr(_write_depth, "count", 0) == 0:
-      raise TypeError(
-        f"{self.__class__.__name__} is managed by Stripe. "
-        "Create and update objects via the Stripe SDK; "
-        "the local model is updated automatically when the webhook arrives. "
-        f"To sync immediately, call {self.__class__.__name__}.objects.from_stripe()."
-      )
-    super().save(*args, **kwargs)
-
-  def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
-    if getattr(_write_depth, "count", 0) == 0:
-      raise TypeError(
-        f"{self.__class__.__name__} is managed by Stripe. "
-        "Delete objects via the Stripe SDK; the local model "
-        "is soft-deleted automatically when the webhook arrives."
-      )
-    return super().delete(*args, **kwargs)
-
 
 class Product(StripeModel[stripe.Product]):
   """Django implementation of Stripe Products.
@@ -219,31 +221,30 @@ class Price(StripeModel[stripe.Price]):
     "price.updated",
   )
 
-  TYPES = (
-    ("recurring", _("Recurring charge")),
-    ("one_time", _("One time charge")),
-  )
-  INTERVALS = (
-    ("", _("N/A")),
-    ("day", _("Day")),
-    ("week", _("Week")),
-    ("month", _("Month")),
-    ("year", _("Year")),
-  )
-  USAGE_TYPES = (
-    ("", _("N/A")),
-    ("licensed", _("Licensed")),
-    ("metered", _("Metered")),
-  )
-  BILLING_SCHEMES = (
-    ("per_unit", _("Per unit")),
-    ("tiered", _("Tiered")),
-  )
-  TIERS_MODES = (
-    ("na", _("N/A")),
-    ("volume", _("Volume")),
-    ("graduated", _("Graduated")),
-  )
+  class Type(models.TextChoices):
+    RECURRING = "recurring", _("Recurring charge")
+    ONE_TIME = "one_time", _("One time charge")
+
+  class Interval(models.TextChoices):
+    NA = "", _("N/A")
+    DAY = "day", _("Day")
+    WEEK = "week", _("Week")
+    MONTH = "month", _("Month")
+    YEAR = "year", _("Year")
+
+  class UsageType(models.TextChoices):
+    NA = "", _("N/A")
+    LICENSED = "licensed", _("Licensed")
+    METERED = "metered", _("Metered")
+
+  class BillingScheme(models.TextChoices):
+    PER_UNIT = "per_unit", _("Per unit")
+    TIERED = "tiered", _("Tiered")
+
+  class TiersMode(models.TextChoices):
+    NA = "na", _("N/A")
+    VOLUME = "volume", _("Volume")
+    GRADUATED = "graduated", _("Graduated")
 
   nickname = models.CharField(
     max_length=255,
@@ -263,19 +264,19 @@ class Price(StripeModel[stripe.Price]):
   )
   billing_scheme = models.CharField(
     max_length=10,
-    choices=BILLING_SCHEMES,
+    choices=BillingScheme.choices,
     verbose_name=_("Billing scheme"),
     help_text=("How to compute the price per period"),
   )
   type = models.CharField(
     max_length=10,
-    choices=TYPES,
+    choices=Type.choices,
     verbose_name=_("Type"),
     help_text=_("One-time or recurring charge"),
   )
   interval = models.CharField(
     max_length=10,
-    choices=INTERVALS,
+    choices=Interval.choices,
     blank=True,
     verbose_name=_("Interval"),
     help_text=_("Required for recurring payments"),
@@ -288,13 +289,13 @@ class Price(StripeModel[stripe.Price]):
   usage_type = models.CharField(
     max_length=10,
     blank=True,
-    choices=USAGE_TYPES,
+    choices=UsageType.choices,
     verbose_name=_("Usage type"),
     help_text=("Determines how the quantity per period should be determined"),
   )
   tiers_mode = models.CharField(
     max_length=10,
-    choices=TIERS_MODES,
+    choices=TiersMode.choices,
     verbose_name=_("Tiers mode"),
     help_text=(
       "In volume-based tiering, the maximum quantity within a period determines the per unit price. "  # noqa: E501
@@ -314,6 +315,9 @@ class Price(StripeModel[stripe.Price]):
     verbose_name = _("Price")
     verbose_name_plural = _("Price")
 
+  def __str__(self) -> str:
+    return self.nickname or self.id
+
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Price) -> dict[str, Any]:
     data = super().deserialize(stripe_obj)
@@ -328,9 +332,6 @@ class Price(StripeModel[stripe.Price]):
       )
 
     return data
-
-  def __str__(self) -> str:
-    return self.nickname or self.id
 
   @property
   def recurring(self) -> str:
@@ -382,6 +383,13 @@ class PriceTier(models.Model):
     verbose_name=_("Price"),
   )
 
+  def __str__(self) -> str:
+    if self.up_to is None:
+      s = f"Tier: {self.flat_amount} + {self.unit_amount} per unit"
+    else:
+      s = f"Tier: {self.flat_amount} + {self.unit_amount} per unit, up to {self.up_to}"
+    return s
+
   @classmethod
   def deserialize(cls, stripe_obj: stripe.StripeObject) -> dict[str, Any]:
     return dict(stripe_obj)
@@ -404,10 +412,9 @@ class Coupon(StripeModel[stripe.Coupon]):
     "coupon.updated",
   )
 
-  DURATIONS = (
-    ("once", _("Once")),
-    ("forever", _("Forever")),
-  )
+  class Duration(models.TextChoices):
+    ONCE = "once", _("Once")
+    FOREVER = "forever", _("Forever")
 
   name = models.CharField(
     max_length=255,
@@ -436,7 +443,7 @@ class Coupon(StripeModel[stripe.Coupon]):
   )
   duration = models.CharField(
     max_length=9,
-    choices=DURATIONS,
+    choices=Duration.choices,
     verbose_name=_("Duration"),
     help_text=_("How long the discount will apply to a customer's subscription"),
   )
@@ -470,6 +477,9 @@ class Coupon(StripeModel[stripe.Coupon]):
     verbose_name=_("Deleted?"),
   )
 
+  def __str__(self) -> str:
+    return self.name or self.id
+
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Coupon) -> dict[str, Any]:
     data = super().deserialize(stripe_obj)
@@ -484,9 +494,6 @@ class Coupon(StripeModel[stripe.Coupon]):
       data["products"] = list(applies_to.products)
 
     return data
-
-  def __str__(self) -> str:
-    return self.name or self.id
 
   @property
   def terms(self) -> str:
@@ -573,30 +580,8 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
     verbose_name = _("Promotion Code")
     verbose_name_plural = _("Promotion Codes")
 
-  @classmethod
-  def deserialize(cls, stripe_obj: stripe.PromotionCode) -> dict[str, Any]:
-    data = super().deserialize(stripe_obj)
-
-    if stripe_obj.promotion:
-      stripe_coupon = stripe_obj.promotion.coupon
-      if isinstance(stripe_coupon, stripe.Coupon):
-        data["coupon"] = stripe_coupon
-      elif isinstance(stripe_coupon, str):
-        data["coupon_id"] = stripe_coupon
-
-    return data
-
   def __str__(self) -> str:
     return self.code or self.id
-
-  @property
-  def redemptions(self) -> str:
-    count = f"{self.times_redeemed:,d}"
-    if self.max_redemptions:
-      maximum = f"{self.max_redemptions:,d}"
-    else:
-      maximum = "&infin;"
-    return mark_safe(f"{count} of {maximum}")
 
   def save(self, *args: Any, **kwargs: Any) -> None:
     """Extra logic to determine if a promotion code should be deactivated.
@@ -611,6 +596,28 @@ class PromotionCode(StripeModel[stripe.PromotionCode]):
       # Confirmed 02/13/2026: this has not been fixed.
       self.active = False
     super().save(*args, **kwargs)
+
+  @classmethod
+  def deserialize(cls, stripe_obj: stripe.PromotionCode) -> dict[str, Any]:
+    data = super().deserialize(stripe_obj)
+
+    if stripe_obj.promotion:
+      stripe_coupon = stripe_obj.promotion.coupon
+      if isinstance(stripe_coupon, stripe.Coupon):
+        data["coupon"] = stripe_coupon
+      elif isinstance(stripe_coupon, str):
+        data["coupon_id"] = stripe_coupon
+
+    return data
+
+  @property
+  def redemptions(self) -> str:
+    count = f"{self.times_redeemed:,d}"
+    if self.max_redemptions:
+      maximum = f"{self.max_redemptions:,d}"
+    else:
+      maximum = "&infin;"
+    return mark_safe(f"{count} of {maximum}")
 
 
 class Discount(StripeModel[stripe.Discount]):
@@ -773,61 +780,61 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
     "payment_method.updated",
   )
 
-  TYPES = (
-    ("acss_debit", _("ACSS Debit (Canada/US)")),
-    ("affirm", _("Affirm")),
-    ("afterpay_clearpay", _("Afterpay / Clearpay")),
-    ("alipay", _("Alipay")),
-    ("alma", _("Alma")),
-    ("amazon_pay", _("Amazon Pay")),
-    ("au_becs_debit", _("BECS Debit (Australia)")),
-    ("bacs_debit", _("BACS Debit (UK)")),
-    ("bancontact", _("Bancontact (Belgium)")),
-    ("billie", _("Billie")),
-    ("blik", _("BLIK (Poland)")),
-    ("boleto", _("Boleto (Brazil)")),
-    ("card", _("Credit/Debit Card")),
-    ("card_present", _("Card Present")),
-    ("cashapp", _("Cash App Pay")),
-    ("crypto", _("Crypto")),
-    ("custom", _("Custom")),
-    ("customer_balance", _("Customer Balance")),
-    ("eps", _("EPS (Austria)")),
-    ("fpx", _("FPX (Malaysia)")),
-    ("giropay", _("giropay (Germany)")),
-    ("grabpay", _("GrabPay (Southeast Asia)")),
-    ("ideal", _("iDEAL (Netherlands)")),
-    ("interac_present", _("Interac (Terminal)")),
-    ("kakao_pay", _("Kakao Pay (South Korea)")),
-    ("klarna", _("Klarna")),
-    ("konbini", _("Konbini (Japan)")),
-    ("kr_card", _("Korean Card")),
-    ("link", _("Link")),
-    ("mb_way", _("MB WAY (Portugal)")),
-    ("mobilepay", _("MobilePay (Scandinavia)")),
-    ("multibanco", _("Multibanco (Portugal)")),
-    ("naver_pay", _("Naver Pay (South Korea)")),
-    ("nz_bank_account", _("Bank Account (New Zealand)")),
-    ("oxxo", _("OXXO (Mexico)")),
-    ("p24", _("Przelewy24 (Poland)")),
-    ("pay_by_bank", _("Pay by Bank")),
-    ("payco", _("PAYCO (South Korea)")),
-    ("paynow", _("PayNow (Singapore)")),
-    ("paypal", _("PayPal")),
-    ("payto", _("PayTo (Australia)")),
-    ("pix", _("Pix (Brazil)")),
-    ("promptpay", _("PromptPay (Thailand)")),
-    ("revolut_pay", _("Revolut Pay")),
-    ("samsung_pay", _("Samsung Pay")),
-    ("satispay", _("Satispay (Italy)")),
-    ("sepa_debit", _("SEPA Direct Debit (EU)")),
-    ("sofort", _("Sofort (Europe)")),
-    ("swish", _("Swish (Sweden)")),
-    ("twint", _("TWINT (Switzerland)")),
-    ("us_bank_account", _("Bank Account (US)")),
-    ("wechat_pay", _("WeChat Pay")),
-    ("zip", _("Zip")),
-  )
+  class Type(models.TextChoices):
+    ACSS_DEBIT = "acss_debit", _("ACSS Debit (Canada/US)")
+    AFFIRM = "affirm", _("Affirm")
+    AFTERPAY_CLEARPAY = "afterpay_clearpay", _("Afterpay / Clearpay")
+    ALIPAY = "alipay", _("Alipay")
+    ALMA = "alma", _("Alma")
+    AMAZON_PAY = "amazon_pay", _("Amazon Pay")
+    AU_BECS_DEBIT = "au_becs_debit", _("BECS Debit (Australia)")
+    BACS_DEBIT = "bacs_debit", _("BACS Debit (UK)")
+    BANCONTACT = "bancontact", _("Bancontact (Belgium)")
+    BILLIE = "billie", _("Billie")
+    BLIK = "blik", _("BLIK (Poland)")
+    BOLETO = "boleto", _("Boleto (Brazil)")
+    CARD = "card", _("Credit/Debit Card")
+    CARD_PRESENT = "card_present", _("Card Present")
+    CASHAPP = "cashapp", _("Cash App Pay")
+    CRYPTO = "crypto", _("Crypto")
+    CUSTOM = "custom", _("Custom")
+    CUSTOMER_BALANCE = "customer_balance", _("Customer Balance")
+    EPS = "eps", _("EPS (Austria)")
+    FPX = "fpx", _("FPX (Malaysia)")
+    GIROPAY = "giropay", _("giropay (Germany)")
+    GRABPAY = "grabpay", _("GrabPay (Southeast Asia)")
+    IDEAL = "ideal", _("iDEAL (Netherlands)")
+    INTERAC_PRESENT = "interac_present", _("Interac (Terminal)")
+    KAKAO_PAY = "kakao_pay", _("Kakao Pay (South Korea)")
+    KLARNA = "klarna", _("Klarna")
+    KONBINI = "konbini", _("Konbini (Japan)")
+    KR_CARD = "kr_card", _("Korean Card")
+    LINK = "link", _("Link")
+    MB_WAY = "mb_way", _("MB WAY (Portugal)")
+    MOBILEPAY = "mobilepay", _("MobilePay (Scandinavia)")
+    MULTIBANCO = "multibanco", _("Multibanco (Portugal)")
+    NAVER_PAY = "naver_pay", _("Naver Pay (South Korea)")
+    NZ_BANK_ACCOUNT = "nz_bank_account", _("Bank Account (New Zealand)")
+    OXXO = "oxxo", _("OXXO (Mexico)")
+    P24 = "p24", _("Przelewy24 (Poland)")
+    PAY_BY_BANK = "pay_by_bank", _("Pay by Bank")
+    PAYCO = "payco", _("PAYCO (South Korea)")
+    PAYNOW = "paynow", _("PayNow (Singapore)")
+    PAYPAL = "paypal", _("PayPal")
+    PAYTO = "payto", _("PayTo (Australia)")
+    PIX = "pix", _("Pix (Brazil)")
+    PROMPTPAY = "promptpay", _("PromptPay (Thailand)")
+    REVOLUT_PAY = "revolut_pay", _("Revolut Pay")
+    SAMSUNG_PAY = "samsung_pay", _("Samsung Pay")
+    SATISPAY = "satispay", _("Satispay (Italy)")
+    SEPA_DEBIT = "sepa_debit", _("SEPA Direct Debit (EU)")
+    SOFORT = "sofort", _("Sofort (Europe)")
+    SWISH = "swish", _("Swish (Sweden)")
+    TWINT = "twint", _("TWINT (Switzerland)")
+    US_BANK_ACCOUNT = "us_bank_account", _("Bank Account (US)")
+    WECHAT_PAY = "wechat_pay", _("WeChat Pay")
+    ZIP = "zip", _("Zip")
+
   CARD_BRANDS = (
     ("amex", _("American Express")),
     ("cartes_bancaires", _("Cartes Bancaires")),
@@ -844,7 +851,7 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
 
   type = models.CharField(
     max_length=17,
-    choices=TYPES,
+    choices=Type.choices,
     verbose_name=_("Type"),
   )
   details = models.JSONField(
@@ -869,12 +876,6 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
     verbose_name = _("Payment Method")
     verbose_name_plural = _("Payment Methods")
 
-  @classmethod
-  def deserialize(cls, stripe_obj: stripe.PaymentMethod) -> dict[str, Any]:
-    data = super().deserialize(stripe_obj)
-    data["details"] = getattr(stripe_obj, stripe_obj.type)
-    return data
-
   def __str__(self) -> str:
     if self.type == "card":
       s = "{brand} ({last4})".format(
@@ -884,6 +885,12 @@ class PaymentMethod(StripeModel[stripe.PaymentMethod]):
     else:  # TODO add more formats
       s = self.get_type_display()
     return s
+
+  @classmethod
+  def deserialize(cls, stripe_obj: stripe.PaymentMethod) -> dict[str, Any]:
+    data = super().deserialize(stripe_obj)
+    data["details"] = getattr(stripe_obj, stripe_obj.type)
+    return data
 
 
 class FundingInstructions(models.Model):
@@ -942,6 +949,9 @@ class FundingInstructions(models.Model):
     verbose_name = _("Funding Instructions")
     verbose_name_plural = _("Funding Instructions")
 
+  def __str__(self) -> str:
+    return self.bank_name
+
   @classmethod
   def deserialize(
     cls,
@@ -966,9 +976,6 @@ class FundingInstructions(models.Model):
 
     return data
 
-  def __str__(self) -> str:
-    return self.bank_name
-
 
 class PaymentIntent(StripeModel[stripe.PaymentIntent]):
   """Django implementation of Stripe Payment Intents.
@@ -992,19 +999,18 @@ class PaymentIntent(StripeModel[stripe.PaymentIntent]):
     "payment_intent.succeeded",
   )
 
-  FUTURE_USAGES = (
-    ("on_session", _("On Session")),
-    ("off_session", _("Off Session")),
-  )
-  STATUSES = (
-    ("requires_payment_method", _("Requires payment method")),
-    ("requires_confirmation", _("Requires confirmation")),
-    ("requires_action", _("Requires action")),
-    ("processing", _("Processing")),
-    ("requires_capture", _("Requires capture")),
-    ("canceled", _("Canceled")),
-    ("succeeded", _("Succeeded")),
-  )
+  class FutureUsage(models.TextChoices):
+    ON_SESSION = "on_session", _("On Session")
+    OFF_SESSION = "off_session", _("Off Session")
+
+  class Status(models.TextChoices):
+    REQUIRES_PAYMENT_METHOD = "requires_payment_method", _("Requires payment method")
+    REQUIRES_CONFIRMATION = "requires_confirmation", _("Requires confirmation")
+    REQUIRES_ACTION = "requires_action", _("Requires action")
+    PROCESSING = "processing", _("Processing")
+    REQUIRES_CAPTURE = "requires_capture", _("Requires capture")
+    CANCELED = "canceled", _("Canceled")
+    SUCCEEDED = "succeeded", _("Succeeded")
 
   description = models.CharField(
     max_length=255,
@@ -1013,7 +1019,7 @@ class PaymentIntent(StripeModel[stripe.PaymentIntent]):
   )
   status = models.CharField(
     max_length=23,
-    choices=STATUSES,
+    choices=Status.choices,
     verbose_name=_("Status"),
   )
   currency = models.CharField(
@@ -1029,7 +1035,7 @@ class PaymentIntent(StripeModel[stripe.PaymentIntent]):
   )
   setup_future_usage = models.CharField(
     max_length=11,
-    choices=FUTURE_USAGES,
+    choices=FutureUsage.choices,
     verbose_name=_("Setup future usage"),
   )
   last_payment_error = models.JSONField(
@@ -1151,31 +1157,32 @@ class Subscription(StripeModel[stripe.Subscription]):
     "customer.subscription.updated",
   )
 
-  STATUSES = (
-    ("incomplete", _("Incomplete")),
-    ("incomplete_expired", _("Incomplete expired")),
-    ("trialing", _("Trial")),
-    ("active", _("Active")),
-    ("past_due", _("Past due")),
-    ("canceled", _("Canceled")),
-    ("unpaid", _("Unpaid")),
-  )
-  ACTIVE_STATUSES = (
-    "trialing",
-    "active",
-  )
-  TERMINAL_STATUSES = (
-    "incomplete_expired",
-    "canceled",
-  )
-  COLLECTION_METHODS = (
-    ("charge_automatically", _("Charge automatically")),
-    ("send_invoice", _("Send invoice")),
-  )
+  class Status(models.TextChoices):
+    INCOMPLETE = "incomplete", _("Incomplete")
+    INCOMPLETE_EXPIRED = "incomplete_expired", _("Incomplete expired")
+    TRIALING = "trialing", _("Trial")
+    ACTIVE = "active", _("Active")
+    PAST_DUE = "past_due", _("Past due")
+    CANCELED = "canceled", _("Canceled")
+    UNPAID = "unpaid", _("Unpaid")
+
+    @classmethod
+    def active_statuses(cls) -> tuple[Subscription.Status, ...]:
+      """Statuses that grant access to subscription features."""
+      return (cls.TRIALING, cls.ACTIVE)
+
+    @classmethod
+    def terminal_statuses(cls) -> tuple[Subscription.Status, ...]:
+      """Statuses a subscription cannot recover from."""
+      return (cls.INCOMPLETE_EXPIRED, cls.CANCELED)
+
+  class CollectionMethod(models.TextChoices):
+    CHARGE_AUTOMATICALLY = "charge_automatically", _("Charge automatically")
+    SEND_INVOICE = "send_invoice", _("Send invoice")
 
   status = models.CharField(
     max_length=18,
-    choices=STATUSES,
+    choices=Status.choices,
     verbose_name=_("Status"),
   )
   cancel_at_period_end = models.BooleanField(
@@ -1183,7 +1190,7 @@ class Subscription(StripeModel[stripe.Subscription]):
   )
   collection_method = models.CharField(
     max_length=20,
-    choices=COLLECTION_METHODS,
+    choices=CollectionMethod.choices,
     verbose_name=_("Collection method"),
     help_text=_(
       "Charge using the default source on file or email invoice with instructions"
@@ -1290,17 +1297,16 @@ class Invoice(StripeModel[stripe.Invoice]):
     "invoice.will_be_due",
   )
 
-  COLLECTION_METHODS = (
-    ("charge_automatically", _("Charge automatically")),
-    ("send_invoice", _("Send invoice")),
-  )
-  STATUSES = (
-    ("draft", _("Draft")),
-    ("open", _("Open")),
-    ("paid", _("Paid")),
-    ("uncollectible", _("Uncollectible")),
-    ("void", _("Void")),
-  )
+  class CollectionMethod(models.TextChoices):
+    CHARGE_AUTOMATICALLY = "charge_automatically", _("Charge automatically")
+    SEND_INVOICE = "send_invoice", _("Send invoice")
+
+  class Status(models.TextChoices):
+    DRAFT = "draft", _("Draft")
+    OPEN = "open", _("Open")
+    PAID = "paid", _("Paid")
+    UNCOLLECTIBLE = "uncollectible", _("Uncollectible")
+    VOID = "void", _("Void")
 
   created = models.DateTimeField(
     verbose_name=_("Created"),
@@ -1311,7 +1317,7 @@ class Invoice(StripeModel[stripe.Invoice]):
   )
   status = models.CharField(
     max_length=25,
-    choices=STATUSES,
+    choices=Status.choices,
     verbose_name=_("Status"),
   )
   currency = models.CharField(
@@ -1393,7 +1399,7 @@ class Invoice(StripeModel[stripe.Invoice]):
   )
   collection_method = models.CharField(
     max_length=20,
-    choices=COLLECTION_METHODS,
+    choices=CollectionMethod.choices,
     verbose_name=_("Collection method"),
     help_text=_(
       "Charge using the default source on file or email invoice with instructions"
@@ -1429,6 +1435,9 @@ class Invoice(StripeModel[stripe.Invoice]):
     verbose_name_plural = _("Invoices")
     get_latest_by = "created"
 
+  def __str__(self) -> str:
+    return self.number or self.id
+
   @classmethod
   def deserialize(cls, stripe_obj: stripe.Invoice) -> dict[str, Any]:
     data = super().deserialize(stripe_obj)
@@ -1454,9 +1463,6 @@ class Invoice(StripeModel[stripe.Invoice]):
   @cached_property
   def has_prorations(self) -> bool:
     return self.lines.filter(proration=True).exists()
-
-  def __str__(self) -> str:
-    return self.number or self.id
 
 
 class InvoiceLineItem(StripeModel[stripe.StripeObject]):
@@ -1568,18 +1574,17 @@ class InvoicePayment(StripeModel[stripe.StripeObject]):
     "payment.payment_intent",
   )
 
-  STATUSES = (
-    ("open", _("Open")),
-    ("paid", _("Paid")),
-    ("canceled", _("Canceled")),
-  )
+  class Status(models.TextChoices):
+    OPEN = "open", _("Open")
+    PAID = "paid", _("Paid")
+    CANCELED = "canceled", _("Canceled")
 
   created = models.DateTimeField(
     verbose_name=_("Created"),
   )
   status = models.CharField(
     max_length=10,
-    choices=STATUSES,
+    choices=Status.choices,
     verbose_name=_("Status"),
   )
   currency = models.CharField(
@@ -1649,53 +1654,61 @@ class BalanceTransaction(StripeModel[stripe.BalanceTransaction]):
 
   """
 
-  TYPES = (
-    ("adjustment", _("Adjustment")),
-    ("advance", _("Advance")),
-    ("advance_funding", _("Advance funding")),
-    ("anticipation_repayment", _("Anticipation repayment")),
-    ("application_fee", _("Application fee")),
-    ("application_fee_refund", _("Application fee refund")),
-    ("charge", _("Charge")),
-    ("connect_collection_transfer", _("Connect collection transfer")),
-    ("contribution", _("Contribution")),
-    ("issuing_authorization_hold", _("Issuing authorization hold")),
-    ("issuing_authorization_release", _("Issuing authorization release")),
-    ("issuing_dispute", _("Issuing dispute")),
-    ("issuing_transaction", _("Issuing transaction")),
-    ("payment", _("Payment")),
-    ("payment_failure_refund", _("Payment failure refund")),
-    ("payment_refund", _("Payment refund")),
-    ("payout", _("Payout")),
-    ("payout_cancel", _("Payout cancel")),
-    ("payout_failure", _("Payout failure")),
-    ("refund", _("Refund")),
-    ("refund_failure", _("Refund failure")),
-    ("reserve_transaction", _("Reserve transaction")),
-    ("reserved_funds", _("Reserved funds")),
-    ("stripe_fee", _("Stripe fee")),
-    ("stripe_fx_fee", _("Stripe currency conversion fee")),
-    ("tax_fee", _("Taxes collected by Stripe")),
-    ("topup", _("Topup")),
-    ("topup_reversal", _("Topup reversal")),
-    ("transfer", _("Transfer")),
-    ("transfer_cancel", _("Transfer cancelled")),
-    ("transfer_failure", _("Transfer failure")),
-    ("transfer_refund", _("Transfer refund")),
-  )
-  STATUSES = (
-    ("available", _("Available")),
-    ("pending", _("Pending")),
-  )
+  class Type(models.TextChoices):
+    ADJUSTMENT = "adjustment", _("Adjustment")
+    ADVANCE = "advance", _("Advance")
+    ADVANCE_FUNDING = "advance_funding", _("Advance funding")
+    ANTICIPLATION_REPAYMENT = "anticipation_repayment", _("Anticipation repayment")
+    APPLICATION_FEE = "application_fee", _("Application fee")
+    APPLICATION_FEE_REFUND = "application_fee_refund", _("Application fee refund")
+    CHARGE = "charge", _("Charge")
+    CONNECT_COLLECTION_TRANSFER = (
+      "connect_collection_transfer",
+      _("Connect collection transfer"),
+    )
+    CONTRIBUTION = "contribution", _("Contribution")
+    ISSUING_AUTHORIZATION_HOLD = (
+      "issuing_authorization_hold",
+      _("Issuing authorization hold"),
+    )
+    ISSUING_AUTHORIZATION_RELEASE = (
+      "issuing_authorization_release",
+      _("Issuing authorization release"),
+    )
+    ISSUING_DISPUTE = "issuing_dispute", _("Issuing dispute")
+    ISSUING_TRANSACTION = "issuing_transaction", _("Issuing transaction")
+    PAYMENT = "payment", _("Payment")
+    PAYMENT_FAILURE_REFUND = "payment_failure_refund", _("Payment failure refund")
+    PAYMENT_REFUND = "payment_refund", _("Payment refund")
+    PAYOUT = "payout", _("Payout")
+    PAYOUT_CANCEL = "payout_cancel", _("Payout cancel")
+    PAYOUT_FAILURE = "payout_failure", _("Payout failure")
+    REFUND = "refund", _("Refund")
+    REFUND_FAILURE = "refund_failure", _("Refund failure")
+    RESERVE_TRANSACTION = "reserve_transaction", _("Reserve transaction")
+    RESERVED_FUNDS = "reserved_funds", _("Reserved funds")
+    STRIPE_FEE = "stripe_fee", _("Stripe fee")
+    STRIPE_FX_FEE = "stripe_fx_fee", _("Stripe currency conversion fee")
+    TAX_FEE = "tax_fee", _("Taxes collected by Stripe")
+    TOPUP = "topup", _("Topup")
+    TOPUP_REVERSAL = "topup_reversal", _("Topup reversal")
+    TRANSFER = "transfer", _("Transfer")
+    TRANSFER_CANCEL = "transfer_cancel", _("Transfer cancelled")
+    TRANSFER_FAILURE = "transfer_failure", _("Transfer failure")
+    TRANSFER_REFUND = "transfer_refund", _("Transfer refund")
+
+  class Status(models.TextChoices):
+    AVAILABLE = "available", _("Available")
+    PENDING = "pending", _("Pending")
 
   type = models.CharField(
     max_length=50,
-    choices=TYPES,
+    choices=Type.choices,
     verbose_name=_("Type"),
   )
   status = models.CharField(
     max_length=10,
-    choices=STATUSES,
+    choices=Status.choices,
     verbose_name=_("Status"),
   )
   available_on = models.DateTimeField(
@@ -1760,11 +1773,10 @@ class Charge(StripeModel[stripe.Charge]):
     "charge.updated",
   )
 
-  STATUSES = (
-    ("succeeded", _("Succeeded")),
-    ("pending", _("Pending")),
-    ("failed", _("Failed")),
-  )
+  class Status(models.TextChoices):
+    SUCCEEDED = "succeeded", _("Succeeded")
+    PENDING = "pending", _("Pending")
+    FAILED = "failed", _("Failed")
 
   customer = models.ForeignKey(
     Customer,
@@ -1786,7 +1798,7 @@ class Charge(StripeModel[stripe.Charge]):
   )
   status = models.CharField(
     max_length=25,
-    choices=STATUSES,
+    choices=Status.choices,
     verbose_name=_("Status"),
   )
   currency = models.CharField(
@@ -1861,26 +1873,25 @@ class Refund(StripeModel[stripe.Refund]):
     "refund.updated",
   )
 
-  REASONS = (
-    ("duplicate", _("Duplicate charge")),
-    ("fraudulent", _("Fraudulent charge")),
-    ("requested_by_customer", _("Requested by customer")),
-  )
-  STATUSES = (
-    ("pending", _("Pending")),
-    ("succeeded", _("Succeeded")),
-    ("failed", _("Failed")),
-  )
+  class Reason(models.TextChoices):
+    DUPLICATE = "duplicate", _("Duplicate charge")
+    FRAUDULENT = "fraudulent", _("Fraudulent charge")
+    REQUESTED_BY_CUSTOMER = "requested_by_customer", _("Requested by customer")
+
+  class Status(models.TextChoices):
+    PENDING = "pending", _("Pending")
+    SUCCEEDED = "succeeded", _("Succeeded")
+    FAILED = "failed", _("Failed")
 
   reason = models.CharField(
     max_length=25,
-    choices=REASONS,
+    choices=Reason.choices,
     verbose_name=_("Reason"),
     help_text=_("Select reason for refund"),
   )
   status = models.CharField(
     max_length=25,
-    choices=STATUSES,
+    choices=Status.choices,
     verbose_name=_("Status"),
   )
   currency = models.CharField(
